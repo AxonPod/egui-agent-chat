@@ -1,0 +1,23 @@
+[
+  {
+    "label": "Debug example chat",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "build": { "command": "cargo", "args": ["build", "--example", "chat"] },
+    "program": "$ZED_WORKTREE_ROOT/target/debug/examples/chat",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "env": { "RUST_BACKTRACE": "1" }
+  },
+  {
+    "label": "Debug example chat (release z symbolami)",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "build": {
+      "command": "cargo",
+      "args": ["build", "--release", "--example", "chat"],
+      "env": { "CARGO_PROFILE_RELEASE_DEBUG": "true" }
+    },
+    "program": "$ZED_WORKTREE_ROOT/target/release/examples/chat",
+    "cwd": "$ZED_WORKTREE_ROOT"
+  }
+]

@@ -1,0 +1,55 @@
+[package]
+name = "egui-agent-chat"
+version = "0.1.0"
+edition = "2024"
+description = "An egui chat widget for agentai agents: streamed answers, reasoning and tool calls"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/AxonPod/egui-agent-chat"
+readme = "README.md"
+keywords = ["egui", "agent", "llm", "chat", "agentai"]
+categories = ["gui"]
+
+[features]
+default = ["tokio"]
+## Implements `Spawn` for `tokio::runtime::Handle`.
+tokio = ["dep:tokio"]
+## Implements `Spawn` for smol's global executor and for `Arc<smol::Executor>`.
+smol = ["dep:smol"]
+
+[dependencies]
+agentai = "0.3.1"
+egui = "0.37"
+egui_commonmark = { version = "0.26", features = [
+    "better_syntax_highlighting",
+] }
+futures-util = "0.3.34"
+serde_json = "1.0.154"
+smol = { version = "2", optional = true }
+tokio = { version = "1", features = ["rt"], optional = true }
+
+[dev-dependencies]
+anyhow = "1.0.104"
+async-trait = "0.1.92"
+dotenvy = "0.15.7"
+eframe = "0.37"
+egui_extras = { version = "0.37", features = ["all_loaders"] }
+egui_kittest = "0.37"
+image = { version = "0.25", default-features = false, features = [
+    "png",
+    "jpeg",
+] }
+rfd = "0.17"
+schemars = "1.2"
+serde = { version = "1.0.229", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread"] }
+
+[[test]]
+name = "agent"
+required-features = ["tokio"]
+
+[[test]]
+name = "input"
+required-features = ["tokio"]
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+muda = "0.21"

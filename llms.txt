@@ -1,0 +1,201 @@
+# egui-agent-chat
+
+> An egui widget that shows a chat with an `agentai` agent. You create a `ChatPanel` with your
+> own `agentai::Agent` and something that spawns tasks on your async runtime, then call
+> `chat.ui(ui)` every frame. The widget streams answers in as Markdown, shows reasoning and
+> tool calls as collapsible rows, and has an input with Send/Stop. The conversation is a plain
+> `Vec<agentai::Message>`.
+
+Key facts for integrating:
+
+- `agentai` is not re-exported. Add it as your own dependency, from the same `0.3` line this
+  crate uses, so that both share one `Agent` type.
+- The widget fills the `egui::Ui` it gets, including its own 12 px margins and an input panel
+  at the bottom. To share the screen, put it in a side panel or a window.
+- `ChatPanel::ui` returns nothing, and there are no events. Read the state with `history()` and
+  `is_running()`.
+- A turn runs in the background. The widget asks egui for a repaint whenever data arrives, so
+  you don't need to drive repaints yourself.
+- If a turn fails or is stopped, nothing is added to the history, and the prompt goes back to
+  the input.
+
+## Install
+
+```toml
+[dependencies]
+agentai = "0.3"
+egui-agent-chat = "0.1"          # feature `tokio` is on by default
+egui = "0.37"
+eframe = "0.37"                  # or any other egui integration
+tokio = { version = "1", features = ["rt-multi-thread"] }
+egui_extras = { version = "0.37", features = ["all_loaders"] }  # only for images from tools
+```
+
+## Minimal integration (eframe + tokio)
+
+```rust
+use agentai::Agent;
+use egui_agent_chat::ChatPanel;
+
+struct App {
+    chat: ChatPanel,
+    // Keep the runtime alive as long as the chat; declare it after `chat` so it drops last
+    _runtime: tokio::runtime::Runtime,
+}
+
+impl eframe::App for App {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.chat.ui(ui);
+    }
+}
+
+fn main() -> anyhow::Result<()> {
+    // Any OpenAI-compatible endpoint; for Ollama, the base URL ends in /v1/
+    let agent = Agent::new_with_url("http://localhost:11434/v1/", "ollama", "You are helpful.")?
+        .with_model("qwen3:8b")
+        .with_max_iterations(12);
+    let runtime = tokio::runtime::Runtime::new()?;
+    let chat = ChatPanel::new(runtime.handle().clone(), agent);
+    let app = App { chat, _runtime: runtime };
+    eframe::run_native(
+        "Chat",
+        eframe::NativeOptions::default(),
+        Box::new(|cc| {
+            egui_extras::install_image_loaders(&cc.egui_ctx); // optional, for images from tools
+            Ok(Box::new(app))
+        }),
+    )
+    .map_err(|e| anyhow::anyhow!("{e}"))
+}
+```
+
+## ChatPanel API
+
+- `ChatPanel::new(spawner: impl Spawn, agent: impl Into<Arc<Agent>>) -> ChatPanel`: pass an
+  `Agent`, or an `Arc<Agent>` that the rest of your app shares.
+- `ui(&mut self, ui: &mut egui::Ui)`: call it every frame. It also takes in the data that
+  streamed since the last frame.
+- `ui_with_toolbar(&mut self, ui, add_widgets: impl FnOnce(&mut Toolbar<'_>))`: the same as
+  `ui`, plus your own widgets on the left of the toolbar. Call one of the two each frame, not
+  both. See "Custom toolbar widgets".
+- `send(&mut self, ctx: &egui::Context, prompt: impl Into<String>)`: sends a message from code,
+  with the current history. A running turn is stopped and replaced. The input uses this method
+  too.
+- `cancel(&mut self)`: stops the running turn. Its prompt goes back to the input if the input
+  is empty.
+- `is_running(&self) -> bool`: whether the agent is working on an answer.
+- `history(&self) -> &[agentai::Message]`: every finished turn, including the user's prompts.
+- `set_history(&mut self, Vec<agentai::Message>)`: restores a conversation. It stops a running
+  turn and clears the input. Pass `Vec::new()` to start a new chat.
+- `set_input(&mut self, text: impl Into<String>)`: puts text into the input, e.g. a suggestion.
+- `set_send_shortcut(&mut self, SendShortcut)`: picks the key combination that sends. See
+  "Input behavior".
+- `set_toolbar(&mut self, visible: bool)`: shows or hides the toolbar below the input, which
+  holds the Send/Stop buttons. It is shown by default.
+
+You can call any setter at any time, e.g. from your app's settings.
+
+Configure the agent itself (system prompt, model, tools, max iterations) with `agentai`
+before you pass it in. To change the agent, create a new `ChatPanel` and move the history
+over with `set_history`.
+
+## Saving and restoring history
+
+`agentai::Message` is serde-serializable, so you can store `chat.history()` and later pass it
+back with `chat.set_history(saved)`. A good moment to save is when `is_running()` changes from
+`true` to `false` and `history().len()` has grown.
+
+## Tools
+
+Give the agent a toolbox with `agentai` (`Agent::with_toolbox`, the `#[toolbox]` macro, or
+built-ins such as `agentai::tool::buildin::CurrentDateAndTimeToolBox`). The chat shows each
+call as a row with the tool's name and a status (running / done / failed), its arguments as a
+JSON tree, and the result. If a result contains absolute paths to existing PNG, JPEG or WebP
+files, they appear as pictures below the call. This needs image loaders
+(`egui_extras::install_image_loaders`).
+
+## Context blocks
+
+To attach long material (a file, a selection) to a prompt without flooding the chat, wrap it
+with `egui_agent_chat::context_block(title, body)`. The model gets the full text, and the chat
+shows it collapsed under its title.
+
+```rust
+let prompt = format!("{}\n\nSummarize it.", egui_agent_chat::context_block("notes.md", &notes));
+chat.send(ui.ctx(), prompt);
+```
+
+`split_context(text)` does the reverse: it returns the blocks (`ContextBlock { title, body }`)
+and the remaining text.
+
+## Async runtimes
+
+Turns run as `egui_agent_chat::Task` (a boxed `Send` future) through the `Spawn` trait.
+Cancelling doesn't depend on the runtime: a stopped task is aborted.
+
+- `tokio::runtime::Handle` (feature `tokio`, on by default): `runtime.handle().clone()`.
+- Any closure `Fn(Task) + Send + Sync + 'static`, for other runtimes:
+  `ChatPanel::new(move |task| { my_runtime.spawn(task); }, agent)`.
+- `SmolGlobal` and `Arc<smol::Executor<'static>>` (feature `smol`). Note that agentai's HTTP
+  client currently needs a tokio reactor, so on smol alone a request panics with "there is no
+  reactor running". Use tokio for now.
+
+## Custom toolbar widgets
+
+The toolbar below the input has Send/Stop on the right. Its left side is yours:
+
+```rust
+use egui_agent_chat::icons;
+
+chat.ui_with_toolbar(ui, |toolbar| {
+    // `toolbar` dereferences to the egui::Ui of the left side (laid out left to right)
+    if toolbar.button(format!("{} Attach", icons::PAPERCLIP)).clicked()
+        && let Some(path) = rfd::FileDialog::new().pick_file() // any picker you like
+    {
+        toolbar.input().push_str(&path.display().to_string()); // edit the message being written
+    }
+    toolbar.add_enabled_ui(!toolbar.is_running(), |ui| {
+        if ui.button("Summarize").clicked() { /* set your own app state */ }
+    });
+});
+```
+
+- The closure runs every frame while the toolbar is shown. Add widgets and react to clicks in
+  it, just like other egui code. It may borrow your app's state, because it is not stored.
+- `Toolbar::input()` returns `&mut String`, the text in the input. `Toolbar::is_running()`
+  says whether the agent is working on an answer.
+- To send something yourself, set a flag in the closure, then call `chat.send(ctx, prompt)`
+  after `ui_with_toolbar` returns. While it runs, the closure cannot borrow `chat`.
+- `set_toolbar(false)` hides the whole toolbar, your widgets included. The closure then does
+  not run.
+
+## Icons
+
+`egui_agent_chat::icons` holds the Lucide icon font that the widget uses. It installs itself
+on the first frame. To use the icons elsewhere earlier, call `icons::install(ctx)`, then mix
+the constants into text: `format!("{} Send", icons::SEND)`.
+
+## Input behavior
+
+`egui_agent_chat::SendShortcut` picks the key combination that sends. The other Enter
+combinations add a line. Empty messages are never sent.
+
+- `SendShortcut::Enter` (default), for mostly one-line messages: Enter sends, Shift+Enter
+  adds a line.
+- `SendShortcut::ShiftEnter`, for mostly multi-line messages: Shift+Enter sends, Enter adds a
+  line.
+- `SendShortcut::Custom(egui::KeyboardShortcut)`, e.g.
+  `KeyboardShortcut::new(Modifiers::COMMAND, Key::Enter)` for Cmd/Ctrl+Enter. Enter adds a
+  line.
+
+The placeholder in the empty input names the current shortcuts. While the agent runs, the
+toolbar's Send button becomes Stop. If you hide the toolbar with `set_toolbar(false)`,
+messages are sent only with the shortcut, and only `cancel()` stops an answer. Give your
+users another way to stop, e.g. a menu item.
+
+## Links
+
+- [Repository](https://github.com/AxonPod/egui-agent-chat): source, README, example
+- [API docs](https://docs.rs/egui-agent-chat)
+- [Example app](https://github.com/AxonPod/egui-agent-chat/tree/master/examples/chat): an eframe window with a chat and a menu, run with `cargo run --example chat`
+- [agentai](https://crates.io/crates/agentai): the agent library
