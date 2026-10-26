@@ -1,10 +1,8 @@
 # egui-agent-chat
 
-<p align="right">
-  <img src="https://raw.githubusercontent.com/AxonPod/egui-agent-chat/master/docs/screenshot.png"
-       alt="egui-agent-chat: a chat with an agent, showing a tool call, an image and a reply"
-       width="480">
-</p>
+<img src="https://raw.githubusercontent.com/AxonPod/egui-agent-chat/master/docs/screenshot.png"
+     alt="egui-agent-chat: a chat with an agent, showing a tool call, an image and a reply"
+     align="right" width="25%">
 
 An [egui](https://github.com/emilk/egui) chat widget for [agentai](https://crates.io/crates/agentai)
 agents. Drop it into your app, give it your `Agent`, and get:
