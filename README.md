@@ -37,9 +37,6 @@ chat.ui(ui);
 
 The chat fills the `Ui` it gets; put it in a side panel or a window to share the screen.
 
-To draw images (attached ones and pictures from tool results), also install image loaders in
-your app, e.g. `egui_extras::install_image_loaders(&cc.egui_ctx)`.
-
 For AI coding agents, [`llms.txt`](llms.txt) describes the whole integration in one file.
 
 ## Controlling the chat from code
@@ -91,6 +88,10 @@ chat.set_capabilities(ModelCapabilities::default().with_images(true));
 The user can then drop image files on the chat. Attached images show above the input and go
 with the next message. To add images from code, use `chat.attach(agentai::Media::from_bytes(
 "image/png", bytes))`. Disabling vision again removes the images already attached.
+
+To draw the images, install image loaders in your app once, e.g.
+`egui_extras::install_image_loaders(&cc.egui_ctx)`. The same loaders also show the pictures
+that tools name in their results, even with vision disabled.
 
 ### How to add your own buttons to the toolbar
 
