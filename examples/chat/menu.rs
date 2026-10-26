@@ -1,5 +1,5 @@
-//! The native menu bar on macOS. On other systems the chat actions have keyboard shortcuts in
-//! the window; the settings stay at their defaults.
+//! The native menu bar on macOS. On other systems a menu bar at the top of the window has the
+//! same items, and the actions have keyboard shortcuts.
 
 use std::sync::mpsc::{Receiver, channel};
 
@@ -64,6 +64,59 @@ impl AppMenu {
                 }
             });
         }
+        commands
+    }
+
+    /// Where there is no native menu, shows the menu bar at the top of `ui` and returns the
+    /// commands chosen in it. `shift_enter_sends` and `toolbar` tick the settings.
+    pub fn window_bar(
+        &self,
+        ui: &mut egui::Ui,
+        shift_enter_sends: bool,
+        toolbar: bool,
+    ) -> Vec<Command> {
+        let mut commands = Vec::new();
+        if cfg!(target_os = "macos") {
+            return commands;
+        }
+        let shortcut = |key| {
+            let shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, key);
+            ui.ctx().format_shortcut(&shortcut)
+        };
+        let (new_chat, stop, quit) = (
+            shortcut(egui::Key::N),
+            shortcut(egui::Key::Period),
+            shortcut(egui::Key::Q),
+        );
+        egui::Panel::top("menu_bar").show(ui, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
+                ui.menu_button("Chat", |ui| {
+                    let item = |ui: &mut egui::Ui, text, shortcut| {
+                        ui.add(egui::Button::new(text).shortcut_text(shortcut))
+                            .clicked()
+                    };
+                    if item(ui, "New Chat", new_chat) {
+                        commands.push(Command::NewChat);
+                    }
+                    if item(ui, "Stop Answer", stop) {
+                        commands.push(Command::Stop);
+                    }
+                    ui.separator();
+                    let mut checked = shift_enter_sends;
+                    if ui.checkbox(&mut checked, "Send with Shift+Enter").clicked() {
+                        commands.push(Command::ToggleShiftEnterSends);
+                    }
+                    let mut checked = toolbar;
+                    if ui.checkbox(&mut checked, "Show Toolbar").clicked() {
+                        commands.push(Command::ToggleToolbar);
+                    }
+                    ui.separator();
+                    if item(ui, "Quit", quit) {
+                        commands.push(Command::Quit);
+                    }
+                });
+            });
+        });
         commands
     }
 }

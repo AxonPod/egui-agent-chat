@@ -83,32 +83,43 @@ impl ChatApp {
             toolbar: true,
         })
     }
+
+    fn handle(&mut self, ctx: &egui::Context, command: Command) {
+        match command {
+            Command::NewChat => self.chat.set_history(Vec::new()),
+            Command::Stop => self.chat.cancel(),
+            Command::ToggleShiftEnterSends => {
+                self.shift_enter_sends = !self.shift_enter_sends;
+                self.chat.set_send_shortcut(if self.shift_enter_sends {
+                    SendShortcut::ShiftEnter
+                } else {
+                    SendShortcut::Enter
+                });
+            }
+            Command::ToggleToolbar => {
+                self.toolbar = !self.toolbar;
+                self.chat.set_toolbar(self.toolbar);
+            }
+            Command::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+        }
+    }
 }
 
 impl eframe::App for ChatApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         for command in self.menu.commands(ctx) {
-            match command {
-                Command::NewChat => self.chat.set_history(Vec::new()),
-                Command::Stop => self.chat.cancel(),
-                Command::ToggleShiftEnterSends => {
-                    self.shift_enter_sends = !self.shift_enter_sends;
-                    self.chat.set_send_shortcut(if self.shift_enter_sends {
-                        SendShortcut::ShiftEnter
-                    } else {
-                        SendShortcut::Enter
-                    });
-                }
-                Command::ToggleToolbar => {
-                    self.toolbar = !self.toolbar;
-                    self.chat.set_toolbar(self.toolbar);
-                }
-                Command::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-            }
+            self.handle(ctx, command);
         }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        for command in self
+            .menu
+            .window_bar(ui, self.shift_enter_sends, self.toolbar)
+        {
+            self.handle(&ctx, command);
+        }
         self.chat.ui_with_toolbar(ui, |toolbar| {
             let attach = toolbar
                 .button(format!("{} Attach", icons::PAPERCLIP))
