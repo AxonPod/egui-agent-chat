@@ -25,8 +25,8 @@ cargo run --example chat --no-default-features --features smol
 ```
 
 CI (`.github/workflows/ci.yml`) runs clippy and `cargo test --all-targets` on Linux, macOS and
-Windows for the feature sets `tokio`, `smol` and `tokio+smol`. Doctests run only in the docs
-job, because they use tokio. Code that runs only on some platforms (e.g. the example's macOS
+Windows for the features `tokio` and `smol`. Doctests and the build without any runtime feature
+run only in the docs job. Code that runs only on some platforms (e.g. the example's macOS
 `muda` menu) must not leave dead code elsewhere, or `-D warnings` fails CI on the other OSes.
 Prefer `if cfg!(...)` over `#[cfg]` so the code compiles everywhere.
 

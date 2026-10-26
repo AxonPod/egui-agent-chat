@@ -8,6 +8,8 @@ repository = "https://github.com/AxonPod/egui-agent-chat"
 readme = "README.md"
 keywords = ["egui", "agent", "llm", "chat", "agentai"]
 categories = ["gui"]
+# Repository-only files; the screenshot is shown from GitHub
+exclude = ["docs/", ".github/", ".zed/", "CLAUDE.md"]
 
 [features]
 default = ["tokio"]

@@ -1,5 +1,11 @@
 # egui-agent-chat
 
+<p align="right">
+  <img src="https://raw.githubusercontent.com/AxonPod/egui-agent-chat/master/docs/screenshot.png"
+       alt="egui-agent-chat: a chat with an agent, showing a tool call, an image and a reply"
+       width="480">
+</p>
+
 An [egui](https://github.com/emilk/egui) chat widget for [agentai](https://crates.io/crates/agentai)
 agents. Drop it into your app, give it your `Agent`, and get:
 
@@ -37,18 +43,18 @@ chat.ui(ui);
 
 The chat fills the `Ui` it gets; put it in a side panel or a window to share the screen.
 
-For AI coding agents, [`llms.txt`](llms.txt) describes the whole integration in one file.
+For AI coding agents, [`llms.txt`](https://github.com/AxonPod/egui-agent-chat/blob/master/llms.txt) describes the whole integration in one file.
 
 ## Controlling the chat from code
 
-| Method                  | What it does                                               |
-| ----------------------- | ---------------------------------------------------------- |
-| `send(ctx, prompt)`     | Sends a message: text or an `agentai::Prompt` with images  |
-| `cancel()`              | Stops the answer being written                             |
-| `is_running()`          | Whether the agent is working on an answer                  |
-| `set_input(text)`       | Puts text into the input, e.g. a suggestion                |
-| `history()`             | The conversation, to save it                               |
-| `set_history(messages)` | Restores a conversation; an empty one starts a new chat    |
+| Method                  | What it does                                              |
+| ----------------------- | --------------------------------------------------------- |
+| `send(ctx, prompt)`     | Sends a message: text or an `agentai::Prompt` with images |
+| `cancel()`              | Stops the answer being written                            |
+| `is_running()`          | Whether the agent is working on an answer                 |
+| `set_input(text)`       | Puts text into the input, e.g. a suggestion               |
+| `history()`             | The conversation, to save it                              |
+| `set_history(messages)` | Restores a conversation; an empty one starts a new chat   |
 
 ## Customizing behavior
 
@@ -126,11 +132,11 @@ Messages are then sent with the shortcut only, and an answer can be stopped only
 
 Turns of the agent run as background tasks started through the `Spawn` trait:
 
-| Feature           | Implementation                                     |
-| ----------------- | -------------------------------------------------- |
-| `tokio` (default) | `tokio::runtime::Handle`                           |
-| `smol`            | `SmolGlobal`, `Arc<smol::Executor<'static>>`       |
-| –                 | any closure `Fn(Task)`, for other runtimes         |
+| Feature           | Implementation                               |
+| ----------------- | -------------------------------------------- |
+| `tokio` (default) | `tokio::runtime::Handle`                     |
+| `smol`            | `SmolGlobal`, `Arc<smol::Executor<'static>>` |
+| –                 | any closure `Fn(Task)`, for other runtimes   |
 
 agentai's HTTP client needs a tokio reactor. The smol implementations bring one through
 [async-compat](https://crates.io/crates/async-compat); with a closure on another runtime, do
@@ -177,6 +183,8 @@ It needs a `CARGO_REGISTRY_TOKEN` repository secret.
 
 ## License
 
-Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT)
-at your option. The bundled [Lucide](https://lucide.dev) icon font is under the ISC license
-(`assets/lucide/LICENSE`).
+Licensed under either of
+[Apache License, Version 2.0](https://github.com/AxonPod/egui-agent-chat/blob/master/LICENSE-APACHE)
+or [MIT license](https://github.com/AxonPod/egui-agent-chat/blob/master/LICENSE-MIT) at your
+option. The bundled [Lucide](https://lucide.dev) icon font is under the
+[ISC license](https://github.com/AxonPod/egui-agent-chat/blob/master/assets/lucide/LICENSE).
