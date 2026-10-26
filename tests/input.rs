@@ -1,7 +1,8 @@
 //! Typing in the chat input, without a model: the agent talks to a server that accepts the
 //! connection and never answers, so a sent message stays running.
 
-use agentai::Agent;
+mod common;
+
 use egui::accesskit::Role;
 use egui::{Event, Key, KeyboardShortcut, Modifiers};
 use egui_agent_chat::{ChatPanel, SendShortcut};
@@ -26,10 +27,7 @@ fn harness_with_ui(
     std::thread::spawn(move || {
         let _connections: Vec<_> = server.incoming().collect();
     });
-    let agent = Agent::new_with_url(&url, "key", "system")
-        .unwrap()
-        .with_model("model");
-    let mut chat = ChatPanel::new(runtime.handle().clone(), agent);
+    let mut chat = ChatPanel::new(runtime.handle().clone(), common::local_agent(&url));
     setup(&mut chat);
     let mut harness = Harness::builder()
         .with_size(egui::vec2(400.0, 600.0))

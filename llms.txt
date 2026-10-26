@@ -8,8 +8,8 @@
 
 Key facts for integrating:
 
-- `agentai` is not re-exported. Add it as your own dependency, from the same `0.3` line this
-  crate uses, so that both share one `Agent` type.
+- `agentai` is not re-exported. Add it as your own dependency, from the `0.4` line this crate
+  uses (0.4.0 or newer), so that both share one `Agent` type.
 - The widget fills the `egui::Ui` it gets, including its own 12 px margins and an input panel
   at the bottom. To share the screen, put it in a side panel or a window.
 - `ChatPanel::ui` returns nothing, and there are no events. Read the state with `history()` and
@@ -28,7 +28,7 @@ Key facts for integrating:
 
 ```toml
 [dependencies]
-agentai = "0.3"
+agentai = "0.4"
 egui-agent-chat = "0.1"          # feature `tokio` is on by default
 egui = "0.37"
 eframe = "0.37"                  # or any other egui integration
@@ -56,11 +56,9 @@ impl eframe::App for App {
 
 fn main() -> anyhow::Result<()> {
     // agentai picks the provider from the model name ("gpt-4.1-mini", "provider::model", ...)
-    // and reads its settings from the environment, e.g. OPENAI_API_KEY.
-    // For a custom OpenAI-compatible endpoint: Agent::new_with_url(base_url, api_key, system)
-    let agent = Agent::new("You are helpful.")?
-        .with_model("gpt-4.1-mini")
-        .with_max_iterations(12);
+    // and reads its settings from the environment, e.g. OPENAI_API_KEY. For a custom endpoint,
+    // build an `agentai::genai::Client` and use `Agent::from_client(client, model, system)`.
+    let agent = Agent::new("gpt-4.1-mini", "You are helpful.")?.with_max_iterations(12);
     let runtime = tokio::runtime::Runtime::new()?;
     let chat = ChatPanel::new(runtime.handle().clone(), agent);
     let app = App { chat, _runtime: runtime };

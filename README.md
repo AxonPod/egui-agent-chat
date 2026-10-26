@@ -15,11 +15,11 @@ agents. Drop it into your app, give it your `Agent`, and get:
 
 ```toml
 [dependencies]
-agentai = "0.3"
+agentai = "0.4"
 egui-agent-chat = "0.1"
 ```
 
-The agent comes from your own `agentai` dependency; use the same 0.3 version as this crate.
+The agent comes from your own `agentai` dependency; use 0.4, the version this crate uses.
 
 ```rust
 use agentai::Agent;
@@ -27,7 +27,7 @@ use egui_agent_chat::ChatPanel;
 
 // Once, e.g. when your app starts
 // agentai picks the provider from the model name and reads its key, e.g. OPENAI_API_KEY
-let agent = Agent::new("You are helpful.")?.with_model("gpt-4.1-mini");
+let agent = Agent::new("gpt-4.1-mini", "You are helpful.")?;
 let runtime = tokio::runtime::Runtime::new()?; // keep it alive as long as the chat
 let mut chat = ChatPanel::new(runtime.handle().clone(), agent);
 
@@ -35,32 +35,68 @@ let mut chat = ChatPanel::new(runtime.handle().clone(), agent);
 chat.ui(ui);
 ```
 
-`ChatPanel` also has `send` (send a message from code), `cancel`, `is_running`, `set_input`,
-`history` and `set_history` (an empty history starts a new chat).
+The chat fills the `Ui` it gets; put it in a side panel or a window to share the screen.
 
-The input can be tuned for how people write:
+To draw images (attached ones and pictures from tool results), also install image loaders in
+your app, e.g. `egui_extras::install_image_loaders(&cc.egui_ctx)`.
+
+For AI coding agents, [`llms.txt`](llms.txt) describes the whole integration in one file.
+
+## Controlling the chat from code
+
+| Method                  | What it does                                               |
+| ----------------------- | ---------------------------------------------------------- |
+| `send(ctx, prompt)`     | Sends a message: text or an `agentai::Prompt` with images  |
+| `cancel()`              | Stops the answer being written                             |
+| `is_running()`          | Whether the agent is working on an answer                  |
+| `set_input(text)`       | Puts text into the input, e.g. a suggestion                |
+| `history()`             | The conversation, to save it                               |
+| `set_history(messages)` | Restores a conversation; an empty one starts a new chat    |
+
+## Customizing behavior
+
+All settings can be changed at any time, e.g. from your app's preferences.
+
+### How to change the keyboard shortcut that sends
+
+By default Enter sends and Shift+Enter adds a line, which suits short messages. When people
+mostly write longer, multi-line messages, swap them, or pick any other shortcut:
 
 ```rust
 use egui_agent_chat::SendShortcut;
 
-chat.set_send_shortcut(SendShortcut::ShiftEnter); // mostly multi-line messages: Enter adds a line
+// Shift+Enter sends, Enter adds a line
+chat.set_send_shortcut(SendShortcut::ShiftEnter);
+
+// Cmd+Enter (Ctrl+Enter on Windows and Linux) sends, Enter adds a line
 chat.set_send_shortcut(SendShortcut::Custom(egui::KeyboardShortcut::new(
     egui::Modifiers::COMMAND,
     egui::Key::Enter,
-))); // Cmd/Ctrl+Enter sends
-chat.set_toolbar(false); // hides the Send/Stop buttons below the input
+)));
 ```
 
-For a model that reads images, turn them on. The user can then drop image files on the chat:
+The placeholder in the input always names the current shortcuts.
+
+### How to enable or disable vision (images in prompts)
+
+Images are off by default, as a text-only model answers an image with an error. For a model
+that reads images, enable them:
 
 ```rust
 use egui_agent_chat::ModelCapabilities;
 
-chat.set_capabilities(ModelCapabilities::default().with_images(true)); // off by default
+chat.set_capabilities(ModelCapabilities::default().with_images(true));
 ```
 
-Add your own widgets to the left of the toolbar below the input and handle them in the same
-closure, e.g. an image button with your file picker:
+The user can then drop image files on the chat. Attached images show above the input and go
+with the next message. To add images from code, use `chat.attach(agentai::Media::from_bytes(
+"image/png", bytes))`. Disabling vision again removes the images already attached.
+
+### How to add your own buttons to the toolbar
+
+The toolbar below the input has Send/Stop on the right. Its left side is yours: draw widgets
+there and handle them in the same closure. For example, an image button with your file
+picker:
 
 ```rust
 chat.ui_with_toolbar(ui, |toolbar| {
@@ -74,12 +110,16 @@ chat.ui_with_toolbar(ui, |toolbar| {
 });
 ```
 
-`chat.attach(media)` does the same outside the toolbar.
+`toolbar.input()` gives the text being written, to read or change.
 
-To draw images (attached ones and pictures from tool results), install image loaders in your
-app, e.g. `egui_extras::install_image_loaders(&cc.egui_ctx)`.
+### How to hide the toolbar
 
-For AI coding agents, [`llms.txt`](llms.txt) describes the whole integration in one file.
+```rust
+chat.set_toolbar(false);
+```
+
+Messages are then sent with the shortcut only, and an answer can be stopped only with
+`chat.cancel()`, so give users another way to stop it, e.g. a menu item.
 
 ## Async runtime
 

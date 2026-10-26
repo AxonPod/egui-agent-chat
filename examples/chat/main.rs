@@ -29,8 +29,7 @@ fn env(name: &str) -> Result<String> {
 
 fn main() -> Result<()> {
     dotenvy::dotenv().ok();
-    let agent = Agent::new(SYSTEM_PROMPT)?
-        .with_model(env("AGENTAI_MODEL")?)
+    let agent = Agent::new(&env("AGENTAI_MODEL")?, SYSTEM_PROMPT)?
         .with_max_iterations(12)
         .with_toolbox(CurrentDateAndTimeToolBox {});
     let options = eframe::NativeOptions {

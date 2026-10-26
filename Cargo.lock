@@ -134,9 +134,9 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agentai"
-version = "0.3.2"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f92edbe3268e4ddd4fbbf3b907c4c71fc246b0a53dd0f891d540e6461c889f3a"
+checksum = "8b954ab45867f1d22cc9f104cc38e47d21ac93a56b4d2a08c085370e226be5de"
 dependencies = [
  "agentai-macros",
  "async-stream",
@@ -159,9 +159,9 @@ dependencies = [
 
 [[package]]
 name = "agentai-macros"
-version = "0.3.2"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f86d99ce38e127e777f3fdf264b4957b7fafeb1b4dfee3db07660ca482f6b82"
+checksum = "8aaf025ef29476f7535142c6438207c511c62d87707a42028c02c5ec4c06de87"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",

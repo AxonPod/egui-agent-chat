@@ -11,8 +11,7 @@
 //!
 //! # Usage
 //!
-//! Build your agent with your own `agentai` dependency (the same 0.3 version this crate
-//! uses), then create the panel once with the agent and a [`Spawn`] that runs it on your async
+//! Build your agent with your own `agentai` dependency (0.4, the version this crate uses), then create the panel once with the agent and a [`Spawn`] that runs it on your async
 //! runtime, and call [`ChatPanel::ui`] every frame. With eframe and tokio:
 //!
 //! ```no_run
@@ -32,7 +31,7 @@
 //!
 //! fn main() -> anyhow::Result<()> {
 //!     // agentai picks the provider from the model name and reads its key, e.g. OPENAI_API_KEY
-//!     let agent = Agent::new("You are helpful.")?.with_model("gpt-4.1-mini");
+//!     let agent = Agent::new("gpt-4.1-mini", "You are helpful.")?;
 //!     let runtime = tokio::runtime::Runtime::new()?;
 //!     let chat = ChatPanel::new(runtime.handle().clone(), agent);
 //!     let app = App { chat, _runtime: runtime };

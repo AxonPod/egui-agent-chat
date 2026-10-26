@@ -18,7 +18,7 @@ tokio = ["dep:tokio"]
 smol = ["dep:smol", "dep:async-compat"]
 
 [dependencies]
-agentai = "0.3.2"
+agentai = "0.4.0"
 async-compat = { version = "0.2.6", optional = true }
 base64 = "0.23.1"
 egui = "0.37"

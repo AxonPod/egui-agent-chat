@@ -18,9 +18,7 @@ fn chat(runtime: &tokio::runtime::Runtime) -> ChatPanel {
 fn chat_with(spawner: impl Spawn, setup: impl FnOnce(Agent) -> Agent) -> ChatPanel {
     dotenvy::dotenv().ok();
     let model = std::env::var("AGENTAI_MODEL").expect("AGENTAI_MODEL is not set");
-    let agent = Agent::new("You are a terse assistant.")
-        .unwrap()
-        .with_model(model);
+    let agent = Agent::new(&model, "You are a terse assistant.").unwrap();
     ChatPanel::new(spawner, setup(agent))
 }
 

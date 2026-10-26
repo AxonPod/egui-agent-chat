@@ -1,6 +1,8 @@
 //! How turns end, without a model: a fake OpenAI-compatible server streams the answers.
 
-use agentai::{Agent, Part, Role};
+mod common;
+
+use agentai::{Part, Role};
 use egui_agent_chat::ChatPanel;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -85,10 +87,7 @@ fn read_body(stream: &TcpStream) -> String {
 }
 
 fn chat(url: &str, runtime: &tokio::runtime::Runtime) -> ChatPanel {
-    let agent = Agent::new_with_url(url, "key", "system")
-        .unwrap()
-        .with_model("model");
-    ChatPanel::new(runtime.handle().clone(), agent)
+    ChatPanel::new(runtime.handle().clone(), common::local_agent(url))
 }
 
 /// Draws frames for `duration`, or until the turn ends.
