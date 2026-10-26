@@ -3,8 +3,8 @@
 > An egui widget that shows a chat with an `agentai` agent. You create a `ChatPanel` with your
 > own `agentai::Agent` and something that spawns tasks on your async runtime, then call
 > `chat.ui(ui)` every frame. The widget streams answers in as Markdown, shows reasoning and
-> tool calls as collapsible rows, and has an input with Send/Stop. The conversation is a plain
-> `Vec<agentai::Message>`.
+> tool calls as collapsible rows, and has an input with Send/Stop. For vision models it also
+> sends images. The conversation is a plain `Vec<agentai::Message>`.
 
 Key facts for integrating:
 
@@ -16,8 +16,13 @@ Key facts for integrating:
   `is_running()`.
 - A turn runs in the background. The widget asks egui for a repaint whenever data arrives, so
   you don't need to drive repaints yourself.
-- If a turn fails or is stopped, nothing is added to the history, and the prompt goes back to
-  the input.
+- A turn can be stopped, or it can fail, after the agent has started its reply, meaning it has
+  written text or called a tool. Then the exchange so far stays in the history, marked
+  "Stopped." or with the error, and the conversation goes on from it. Tool calls without a
+  result are left out. If only reasoning or nothing had come yet, nothing is added, and the
+  prompt goes back to the input, together with its images.
+- Images are off by default. Turn them on with `set_capabilities` only when the model reads
+  them.
 
 ## Install
 
@@ -28,7 +33,7 @@ egui-agent-chat = "0.1"          # feature `tokio` is on by default
 egui = "0.37"
 eframe = "0.37"                  # or any other egui integration
 tokio = { version = "1", features = ["rt-multi-thread"] }
-egui_extras = { version = "0.37", features = ["all_loaders"] }  # only for images from tools
+egui_extras = { version = "0.37", features = ["all_loaders"] }  # to draw images
 ```
 
 ## Minimal integration (eframe + tokio)
@@ -50,9 +55,11 @@ impl eframe::App for App {
 }
 
 fn main() -> anyhow::Result<()> {
-    // Any OpenAI-compatible endpoint; for Ollama, the base URL ends in /v1/
-    let agent = Agent::new_with_url("http://localhost:11434/v1/", "ollama", "You are helpful.")?
-        .with_model("qwen3:8b")
+    // agentai picks the provider from the model name ("gpt-4.1-mini", "provider::model", ...)
+    // and reads its settings from the environment, e.g. OPENAI_API_KEY.
+    // For a custom OpenAI-compatible endpoint: Agent::new_with_url(base_url, api_key, system)
+    let agent = Agent::new("You are helpful.")?
+        .with_model("gpt-4.1-mini")
         .with_max_iterations(12);
     let runtime = tokio::runtime::Runtime::new()?;
     let chat = ChatPanel::new(runtime.handle().clone(), agent);
@@ -61,7 +68,7 @@ fn main() -> anyhow::Result<()> {
         "Chat",
         eframe::NativeOptions::default(),
         Box::new(|cc| {
-            egui_extras::install_image_loaders(&cc.egui_ctx); // optional, for images from tools
+            egui_extras::install_image_loaders(&cc.egui_ctx); // needed to draw images
             Ok(Box::new(app))
         }),
     )
@@ -78,11 +85,12 @@ fn main() -> anyhow::Result<()> {
 - `ui_with_toolbar(&mut self, ui, add_widgets: impl FnOnce(&mut Toolbar<'_>))`: the same as
   `ui`, plus your own widgets on the left of the toolbar. Call one of the two each frame, not
   both. See "Custom toolbar widgets".
-- `send(&mut self, ctx: &egui::Context, prompt: impl Into<String>)`: sends a message from code,
-  with the current history. A running turn is stopped and replaced. The input uses this method
-  too.
-- `cancel(&mut self)`: stops the running turn. Its prompt goes back to the input if the input
-  is empty.
+- `send(&mut self, ctx: &egui::Context, prompt: impl agentai::prompt::IntoPrompt)`: sends a
+  message from code, with the current history. `prompt` is text or an `agentai::Prompt`, which
+  may carry images. A running turn is stopped and replaced. The input uses this method too.
+  It does not check images against the capabilities.
+- `cancel(&mut self)`: stops the running turn. A reply that has already started stays in the
+  history. Otherwise the prompt and images go back to the input, if the input is empty.
 - `is_running(&self) -> bool`: whether the agent is working on an answer.
 - `history(&self) -> &[agentai::Message]`: every finished turn, including the user's prompts.
 - `set_history(&mut self, Vec<agentai::Message>)`: restores a conversation. It stops a running
@@ -92,6 +100,10 @@ fn main() -> anyhow::Result<()> {
   "Input behavior".
 - `set_toolbar(&mut self, visible: bool)`: shows or hides the toolbar below the input, which
   holds the Send/Stop buttons. It is shown by default.
+- `set_capabilities(&mut self, ModelCapabilities)`: says what the model can read. The default
+  is text only. See "Images".
+- `attach(&mut self, media: agentai::Media) -> bool`: attaches an image to the message being
+  written. It returns `false` and drops the image when the capabilities don't allow it.
 
 You can call any setter at any time, e.g. from your app's settings.
 
@@ -104,6 +116,33 @@ over with `set_history`.
 `agentai::Message` is serde-serializable, so you can store `chat.history()` and later pass it
 back with `chat.set_history(saved)`. A good moment to save is when `is_running()` changes from
 `true` to `false` and `history().len()` has grown.
+
+## Images
+
+Image support is behind the model capabilities, because a text-only model answers an image
+with an error. Turn it on only for vision models:
+
+```rust
+use egui_agent_chat::ModelCapabilities;
+
+chat.set_capabilities(ModelCapabilities::default().with_images(true));
+```
+
+With images on:
+
+- The user can drop image files (PNG, JPEG, GIF, WebP) on the window. On native platforms
+  they are attached automatically. On the web, dropped files are not read yet.
+- Your code can attach images with `chat.attach(media)`, or with `toolbar.attach(media)` from
+  a toolbar button, e.g. with your own file picker. Build the image with
+  `agentai::Media::from_bytes("image/png", bytes)`, and optionally `.with_name("cat.png")`.
+- Attached images appear as thumbnails above the input, each with a remove button, and go with
+  the next message, even one without text. Sent images appear in the user's bubble.
+- `Toolbar::capabilities().images` tells your toolbar whether to show an image button.
+- Turning images off with `set_capabilities` removes the images already attached.
+
+To send an image from code without the input:
+`chat.send(ctx, agentai::Prompt::text("What is in it?").with_image_bytes("image/png", &png))`.
+Drawing images needs image loaders (`egui_extras::install_image_loaders`).
 
 ## Tools
 
@@ -136,9 +175,12 @@ Cancelling doesn't depend on the runtime: a stopped task is aborted.
 - `tokio::runtime::Handle` (feature `tokio`, on by default): `runtime.handle().clone()`.
 - Any closure `Fn(Task) + Send + Sync + 'static`, for other runtimes:
   `ChatPanel::new(move |task| { my_runtime.spawn(task); }, agent)`.
-- `SmolGlobal` and `Arc<smol::Executor<'static>>` (feature `smol`). Note that agentai's HTTP
-  client currently needs a tokio reactor, so on smol alone a request panics with "there is no
-  reactor running". Use tokio for now.
+- `SmolGlobal` and `Arc<smol::Executor<'static>>` (feature `smol`). agentai's HTTP client
+  needs a tokio reactor, so these implementations run each task through
+  `async_compat::Compat`, which starts a small tokio runtime in the background.
+- If you use your own closure on another runtime, wrap the task the same way:
+  `move |task| { my_runtime.spawn(async_compat::Compat::new(task)); }`. Without that, requests
+  panic with "there is no reactor running".
 
 ## Custom toolbar widgets
 
@@ -149,14 +191,22 @@ use egui_agent_chat::icons;
 
 chat.ui_with_toolbar(ui, |toolbar| {
     // `toolbar` dereferences to the egui::Ui of the left side (laid out left to right)
-    if toolbar.button(format!("{} Attach", icons::PAPERCLIP)).clicked()
-        && let Some(path) = rfd::FileDialog::new().pick_file() // any picker you like
+    // An image button, only usable when the model reads images
+    let images = toolbar.capabilities().images;
+    let image_button = egui::Button::new(format!("{} Image", icons::IMAGE_PLUS));
+    if toolbar.add_enabled(images, image_button).clicked()
+        && let Some(path) = rfd::FileDialog::new().add_filter("PNG", &["png"]).pick_file() // any picker
+        && let Ok(bytes) = std::fs::read(&path)
     {
-        toolbar.input().push_str(&path.display().to_string()); // edit the message being written
+        toolbar.attach(agentai::Media::from_bytes("image/png", bytes));
     }
+    // A button that edits the message being written
     toolbar.add_enabled_ui(!toolbar.is_running(), |ui| {
         if ui.button("Summarize").clicked() { /* set your own app state */ }
     });
+    if toolbar.button("Be brief").clicked() {
+        toolbar.input().push_str(" Answer in one sentence.");
+    }
 });
 ```
 
@@ -164,6 +214,8 @@ chat.ui_with_toolbar(ui, |toolbar| {
   it, just like other egui code. It may borrow your app's state, because it is not stored.
 - `Toolbar::input()` returns `&mut String`, the text in the input. `Toolbar::is_running()`
   says whether the agent is working on an answer.
+- `Toolbar::attach(media) -> bool` attaches an image, and `Toolbar::capabilities()` tells
+  whether the model reads images. See "Images".
 - To send something yourself, set a flag in the closure, then call `chat.send(ctx, prompt)`
   after `ui_with_toolbar` returns. While it runs, the closure cannot borrow `chat`.
 - `set_toolbar(false)` hides the whole toolbar, your widgets included. The closure then does

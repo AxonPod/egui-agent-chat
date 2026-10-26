@@ -13,11 +13,14 @@ categories = ["gui"]
 default = ["tokio"]
 ## Implements `Spawn` for `tokio::runtime::Handle`.
 tokio = ["dep:tokio"]
-## Implements `Spawn` for smol's global executor and for `Arc<smol::Executor>`.
-smol = ["dep:smol"]
+## Implements `Spawn` for smol's global executor and for `Arc<smol::Executor>`. Tasks run
+## through async-compat, which gives agentai's tokio-based HTTP client its reactor.
+smol = ["dep:smol", "dep:async-compat"]
 
 [dependencies]
-agentai = "0.3.1"
+agentai = "0.3.2"
+async-compat = { version = "0.2.6", optional = true }
+base64 = "0.23.1"
 egui = "0.37"
 egui_commonmark = { version = "0.26", features = [
     "better_syntax_highlighting",
@@ -49,6 +52,10 @@ required-features = ["tokio"]
 
 [[test]]
 name = "input"
+required-features = ["tokio"]
+
+[[test]]
+name = "turns"
 required-features = ["tokio"]
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]

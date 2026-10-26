@@ -42,6 +42,10 @@ impl Spawn for tokio::runtime::Handle {
 }
 
 /// smol's global executor, which starts its own threads.
+///
+/// agentai's HTTP client needs a tokio reactor, so the smol implementations run each task
+/// through [`async_compat::Compat`], which starts a small tokio runtime in the background on
+/// first use.
 #[cfg(feature = "smol")]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SmolGlobal;
@@ -49,14 +53,14 @@ pub struct SmolGlobal;
 #[cfg(feature = "smol")]
 impl Spawn for SmolGlobal {
     fn spawn(&self, task: Task) {
-        smol::spawn(task).detach();
+        smol::spawn(async_compat::Compat::new(task)).detach();
     }
 }
 
-/// An executor driven by your own threads.
+/// An executor driven by your own threads. See [`SmolGlobal`] about tokio.
 #[cfg(feature = "smol")]
 impl Spawn for std::sync::Arc<smol::Executor<'static>> {
     fn spawn(&self, task: Task) {
-        smol::Executor::spawn(self, task).detach();
+        smol::Executor::spawn(self, async_compat::Compat::new(task)).detach();
     }
 }

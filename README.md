@@ -6,6 +6,7 @@ agents. Drop it into your app, give it your `Agent`, and get:
 - answers streamed in as they are written, rendered as Markdown,
 - collapsible reasoning ("Thinking") and tool calls with their arguments and results,
 - pictures named in tool results shown below the call,
+- images in prompts for vision models: dropped on the chat or attached from your code,
 - an input where Enter sends and Shift+Enter adds a line (or another shortcut you choose), and
   Stop interrupts the answer,
 - the conversation as a plain `Vec<agentai::Message>`, easy to save and restore.
@@ -25,8 +26,8 @@ use agentai::Agent;
 use egui_agent_chat::ChatPanel;
 
 // Once, e.g. when your app starts
-let agent = Agent::new_with_url("https://openrouter.ai/api/v1/", &api_key, "You are helpful.")?
-    .with_model("openai/gpt-4.1-mini");
+// agentai picks the provider from the model name and reads its key, e.g. OPENAI_API_KEY
+let agent = Agent::new("You are helpful.")?.with_model("gpt-4.1-mini");
 let runtime = tokio::runtime::Runtime::new()?; // keep it alive as long as the chat
 let mut chat = ChatPanel::new(runtime.handle().clone(), agent);
 
@@ -50,21 +51,33 @@ chat.set_send_shortcut(SendShortcut::Custom(egui::KeyboardShortcut::new(
 chat.set_toolbar(false); // hides the Send/Stop buttons below the input
 ```
 
-Add your own widgets to the left of that toolbar and handle them in the same closure, e.g. an
-attach button with your file picker:
+For a model that reads images, turn them on. The user can then drop image files on the chat:
+
+```rust
+use egui_agent_chat::ModelCapabilities;
+
+chat.set_capabilities(ModelCapabilities::default().with_images(true)); // off by default
+```
+
+Add your own widgets to the left of the toolbar below the input and handle them in the same
+closure, e.g. an image button with your file picker:
 
 ```rust
 chat.ui_with_toolbar(ui, |toolbar| {
-    if toolbar.button("📎 Attach").clicked()
-        && let Some(path) = rfd::FileDialog::new().pick_file()
+    let images = toolbar.capabilities().images;
+    if toolbar.add_enabled(images, egui::Button::new("🖼 Image")).clicked()
+        && let Some(path) = rfd::FileDialog::new().add_filter("PNG", &["png"]).pick_file()
+        && let Ok(bytes) = std::fs::read(&path)
     {
-        toolbar.input().push_str(&path.display().to_string());
+        toolbar.attach(agentai::Media::from_bytes("image/png", bytes));
     }
 });
 ```
 
-To show pictures from tool results, install image loaders in your app, e.g.
-`egui_extras::install_image_loaders(&cc.egui_ctx)`.
+`chat.attach(media)` does the same outside the toolbar.
+
+To draw images (attached ones and pictures from tool results), install image loaders in your
+app, e.g. `egui_extras::install_image_loaders(&cc.egui_ctx)`.
 
 For AI coding agents, [`llms.txt`](llms.txt) describes the whole integration in one file.
 
@@ -78,28 +91,36 @@ Turns of the agent run as background tasks started through the `Spawn` trait:
 | `smol`            | `SmolGlobal`, `Arc<smol::Executor<'static>>`       |
 | –                 | any closure `Fn(Task)`, for other runtimes         |
 
+agentai's HTTP client needs a tokio reactor. The smol implementations bring one through
+[async-compat](https://crates.io/crates/async-compat); with a closure on another runtime, do
+the same.
+
 ## Example
 
 `examples/chat` opens a window with a chat. It reads the agent's settings from the environment
 or a `.env` file:
 
 ```sh
-AGENTAI_BASE_URL=http://localhost:8000/v1/   # an OpenAI-compatible endpoint
-AGENTAI_API_KEY=...
-AGENTAI_MODEL=...
+AGENTAI_MODEL=gpt-4.1-mini   # agentai picks the provider from the name
+OPENAI_API_KEY=...           # whatever that provider needs
+AGENTAI_IMAGES=0             # optional: for a model that cannot read images
 ```
 
 ```sh
 cargo run --example chat
 ```
 
+Variables already set in your shell win over `.env`. The menu also switches the send
+shortcut, the toolbar and image support.
+
 ## Tests
 
 `cargo test` runs the offline tests. `tests/agent.rs` drives the chat against a real model
-(answer, tool call, stop) with the same environment variables as the example:
+(answer, tool call, stop, an image in the prompt, smol) with the same environment variables as
+the example. The image test needs a vision model.
 
 ```sh
-cargo test --test agent -- --ignored
+cargo test --test agent --features smol -- --ignored
 ```
 
 ## Releasing

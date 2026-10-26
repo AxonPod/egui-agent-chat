@@ -1,7 +1,7 @@
 //! Runs one agent turn as a background task and passes its events to the UI thread.
 
 use crate::spawn::Spawn;
-use agentai::{Agent, AgentEvent, Message, Part, Role, ToolCall};
+use agentai::{Agent, AgentEvent, Message, Part, Prompt, Role, ToolCall};
 use futures_util::StreamExt;
 use futures_util::future::{AbortHandle, abortable};
 use std::sync::Arc;
@@ -39,7 +39,7 @@ pub fn spawn(
     spawner: &dyn Spawn,
     agent: Arc<Agent>,
     history: Vec<Message>,
-    prompt: String,
+    prompt: Prompt,
     ctx: egui::Context,
 ) -> RunningTurn {
     let (tx, updates) = channel();
@@ -61,7 +61,7 @@ pub fn spawn(
 async fn run(
     agent: &Agent,
     history: &[Message],
-    prompt: String,
+    prompt: Prompt,
     send: &impl Fn(Update),
 ) -> Result<(), String> {
     let mut stream = agent

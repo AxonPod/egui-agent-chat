@@ -17,7 +17,11 @@ pub const BRAIN: &str = "\u{e3c6}";
 pub const CHECK: &str = "\u{e06c}";
 /// An hourglass, a tool call that runs.
 pub const HOURGLASS: &str = "\u{e296}";
-/// A paperclip, marks context blocks.
+/// A picture, marks images.
+pub const IMAGE: &str = "\u{e0f6}";
+/// A plus on a picture, e.g. for an "attach image" button.
+pub const IMAGE_PLUS: &str = "\u{e1f7}";
+/// A paperclip, marks context blocks and files.
 pub const PAPERCLIP: &str = "\u{e12d}";
 /// A paper plane, the send button.
 pub const SEND: &str = "\u{e152}";
@@ -29,6 +33,8 @@ pub const TRIANGLE_ALERT: &str = "\u{e193}";
 pub const USER: &str = "\u{e19f}";
 /// A wrench, marks tool calls.
 pub const WRENCH: &str = "\u{e1b1}";
+/// A cross, removes an attachment.
+pub const X: &str = "\u{e1b2}";
 
 /// Adds the icon font as the last fallback of the proportional and monospace families. It
 /// has to be last: the font also maps the letters (to empty glyphs), which would hide text.

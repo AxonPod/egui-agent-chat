@@ -134,13 +134,14 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agentai"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b23ccb57f939908324c5675eb45a39ed3416852fd555841f7bf971ffb897216"
+checksum = "f92edbe3268e4ddd4fbbf3b907c4c71fc246b0a53dd0f891d540e6461c889f3a"
 dependencies = [
  "agentai-macros",
  "async-stream",
  "async-trait",
+ "base64 0.23.1",
  "document-features",
  "futures-util",
  "genai",
@@ -158,9 +159,9 @@ dependencies = [
 
 [[package]]
 name = "agentai-macros"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f99f454c97847bb1eb1cd3968300d2cc3b97bac99a4e42579a58c0ab40e2672"
+checksum = "1f86d99ce38e127e777f3fdf264b4957b7fafeb1b4dfee3db07660ca482f6b82"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -306,6 +307,19 @@ dependencies = [
  "event-listener-strategy",
  "futures-core",
  "pin-project-lite",
+]
+
+[[package]]
+name = "async-compat"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c97d7ff3c25d6c10d64170c12acaf5d4245e76dece3779c1d92b153a64f11df"
+dependencies = [
+ "futures-core",
+ "futures-io",
+ "once_cell",
+ "pin-project-lite",
+ "tokio",
 ]
 
 [[package]]
@@ -1291,7 +1305,9 @@ version = "0.1.0"
 dependencies = [
  "agentai",
  "anyhow",
+ "async-compat",
  "async-trait",
+ "base64 0.23.1",
  "dotenvy",
  "eframe",
  "egui",

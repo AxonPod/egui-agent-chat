@@ -1,7 +1,9 @@
 //! A window with a chat to an agent.
 //!
-//! Configure the agent with environment variables, or a `.env` file:
-//! `AGENTAI_BASE_URL` (an OpenAI-compatible endpoint), `AGENTAI_API_KEY` and `AGENTAI_MODEL`.
+//! Configure the agent with environment variables, or a `.env` file: `AGENTAI_MODEL` names
+//! the model, e.g. `openai::gpt-4.1-mini`, and agentai reads the rest from the provider's usual
+//! variables, e.g. `OPENAI_API_KEY`. Image attachments are on; set
+//! `AGENTAI_IMAGES=0` for a model that cannot read images.
 //!
 //! ```sh
 //! cargo run --example chat
@@ -10,11 +12,11 @@
 
 mod menu;
 
-use agentai::Agent;
 use agentai::tool::buildin::CurrentDateAndTimeToolBox;
+use agentai::{Agent, Media};
 use anyhow::{Context, Result, anyhow};
-use egui_agent_chat::{ChatPanel, SendShortcut, icons};
-use menu::{AppMenu, Command};
+use egui_agent_chat::{ChatPanel, ModelCapabilities, SendShortcut, icons};
+use menu::{AppMenu, Command, Settings};
 
 #[cfg(not(any(feature = "tokio", feature = "smol")))]
 compile_error!("the example needs the `tokio` or the `smol` feature");
@@ -27,14 +29,10 @@ fn env(name: &str) -> Result<String> {
 
 fn main() -> Result<()> {
     dotenvy::dotenv().ok();
-    let agent = Agent::new_with_url(
-        &env("AGENTAI_BASE_URL")?,
-        &env("AGENTAI_API_KEY")?,
-        SYSTEM_PROMPT,
-    )?
-    .with_model(env("AGENTAI_MODEL")?)
-    .with_max_iterations(12)
-    .with_toolbox(CurrentDateAndTimeToolBox {});
+    let agent = Agent::new(SYSTEM_PROMPT)?
+        .with_model(env("AGENTAI_MODEL")?)
+        .with_max_iterations(12)
+        .with_toolbox(CurrentDateAndTimeToolBox {});
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("egui-agent-chat")
@@ -52,9 +50,7 @@ fn main() -> Result<()> {
 struct ChatApp {
     chat: ChatPanel,
     menu: AppMenu,
-    /// Whether Shift+Enter sends, for mostly multi-line messages, instead of Enter.
-    shift_enter_sends: bool,
-    toolbar: bool,
+    settings: Settings,
     // Dropped last: the chat's running turn is a task on it
     #[cfg(feature = "tokio")]
     _runtime: tokio::runtime::Runtime,
@@ -62,26 +58,45 @@ struct ChatApp {
 
 impl ChatApp {
     fn new(cc: &eframe::CreationContext<'_>, agent: Agent) -> Result<Self> {
-        // Shows the pictures that tools name in their results
+        // Shows attached images and the pictures that tools name in their results
         egui_extras::install_image_loaders(&cc.egui_ctx);
-        #[cfg(feature = "tokio")]
-        {
-            let runtime = tokio::runtime::Runtime::new()?;
-            Ok(Self {
-                chat: ChatPanel::new(runtime.handle().clone(), agent),
-                menu: AppMenu::install(&cc.egui_ctx),
-                shift_enter_sends: false,
-                toolbar: true,
-                _runtime: runtime,
-            })
-        }
-        #[cfg(not(feature = "tokio"))]
-        Ok(Self {
-            chat: ChatPanel::new(egui_agent_chat::SmolGlobal, agent),
-            menu: AppMenu::install(&cc.egui_ctx),
+        let settings = Settings {
             shift_enter_sends: false,
             toolbar: true,
-        })
+            // On unless turned off: most current models read images
+            images: !std::env::var("AGENTAI_IMAGES").is_ok_and(|v| v == "0" || v == "false"),
+        };
+        #[cfg(feature = "tokio")]
+        let runtime = tokio::runtime::Runtime::new()?;
+        #[cfg(feature = "tokio")]
+        let chat = ChatPanel::new(runtime.handle().clone(), agent);
+        #[cfg(not(feature = "tokio"))]
+        let chat = ChatPanel::new(egui_agent_chat::SmolGlobal, agent);
+        let mut app = Self {
+            chat,
+            menu: AppMenu::install(&cc.egui_ctx, settings),
+            settings,
+            #[cfg(feature = "tokio")]
+            _runtime: runtime,
+        };
+        app.apply_settings();
+        Ok(app)
+    }
+
+    fn apply_settings(&mut self) {
+        let Settings {
+            shift_enter_sends,
+            toolbar,
+            images,
+        } = self.settings;
+        self.chat.set_send_shortcut(if shift_enter_sends {
+            SendShortcut::ShiftEnter
+        } else {
+            SendShortcut::Enter
+        });
+        self.chat.set_toolbar(toolbar);
+        self.chat
+            .set_capabilities(ModelCapabilities::default().with_images(images));
     }
 
     fn handle(&mut self, ctx: &egui::Context, command: Command) {
@@ -89,22 +104,37 @@ impl ChatApp {
             Command::NewChat => self.chat.set_history(Vec::new()),
             Command::Stop => self.chat.cancel(),
             Command::ToggleShiftEnterSends => {
-                self.shift_enter_sends = !self.shift_enter_sends;
-                self.chat.set_send_shortcut(if self.shift_enter_sends {
-                    SendShortcut::ShiftEnter
-                } else {
-                    SendShortcut::Enter
-                });
+                self.settings.shift_enter_sends = !self.settings.shift_enter_sends;
+                self.apply_settings();
             }
             Command::ToggleToolbar => {
-                self.toolbar = !self.toolbar;
-                self.chat.set_toolbar(self.toolbar);
+                self.settings.toolbar = !self.settings.toolbar;
+                self.apply_settings();
+            }
+            Command::ToggleImages => {
+                self.settings.images = !self.settings.images;
+                self.apply_settings();
             }
             Command::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
         }
     }
 }
 
+/// Reads `path` as an image, or `None` if it is not one or cannot be read.
+fn read_image(path: &std::path::Path) -> Option<Media> {
+    let content_type = match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => return None,
+    };
+    let media = Media::from_bytes(content_type, std::fs::read(path).ok()?);
+    Some(match path.file_name() {
+        Some(name) => media.with_name(name.to_string_lossy()),
+        None => media,
+    })
+}
 impl eframe::App for ChatApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         for command in self.menu.commands(ctx) {
@@ -114,24 +144,26 @@ impl eframe::App for ChatApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        for command in self
-            .menu
-            .window_bar(ui, self.shift_enter_sends, self.toolbar)
-        {
+        for command in self.menu.window_bar(ui, self.settings) {
             self.handle(&ctx, command);
         }
         self.chat.ui_with_toolbar(ui, |toolbar| {
+            // Off for a text-only model, which could not read the image
+            let images = toolbar.capabilities().images;
             let attach = toolbar
-                .button(format!("{} Attach", icons::PAPERCLIP))
-                .on_hover_text("Mention a file in the message");
+                .add_enabled(
+                    images,
+                    egui::Button::new(format!("{} Image", icons::IMAGE_PLUS)),
+                )
+                .on_hover_text("Attach an image")
+                .on_disabled_hover_text("Turn on Chat → Model Reads Images to send images");
             if attach.clicked()
-                && let Some(path) = rfd::FileDialog::new().pick_file()
+                && let Some(path) = rfd::FileDialog::new()
+                    .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp"])
+                    .pick_file()
+                && let Some(image) = read_image(&path)
             {
-                let input = toolbar.input();
-                if !input.is_empty() && !input.ends_with(char::is_whitespace) {
-                    input.push(' ');
-                }
-                input.push_str(&path.display().to_string());
+                toolbar.attach(image);
             }
         });
     }

@@ -10,7 +10,19 @@ pub enum Command {
     /// Switches between Enter and Shift+Enter for sending.
     ToggleShiftEnterSends,
     ToggleToolbar,
+    /// Switches whether the model reads images.
+    ToggleImages,
     Quit,
+}
+
+/// The settings the menus switch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Settings {
+    /// Whether Shift+Enter sends, for mostly multi-line messages, instead of Enter.
+    pub shift_enter_sends: bool,
+    pub toolbar: bool,
+    /// Whether the model reads images.
+    pub images: bool,
 }
 
 pub struct AppMenu {
@@ -20,12 +32,13 @@ pub struct AppMenu {
 }
 
 impl AppMenu {
-    /// Installs the menu bar. Call after the window exists, so it replaces winit's default menu.
-    pub fn install(ctx: &egui::Context) -> Self {
+    /// Installs the menu bar, ticked as `settings`. Call after the window exists, so it replaces
+    /// winit's default menu.
+    pub fn install(ctx: &egui::Context, settings: Settings) -> Self {
         let (tx, commands) = channel();
         #[cfg(target_os = "macos")]
         {
-            let menu = build().expect("menu items are valid");
+            let menu = build(settings).expect("menu items are valid");
             menu.init_for_nsapp();
             let ctx = ctx.clone();
             muda::MenuEvent::set_event_handler(Some(move |event: muda::MenuEvent| {
@@ -41,7 +54,7 @@ impl AppMenu {
         }
         #[cfg(not(target_os = "macos"))]
         {
-            let _ = (ctx, tx);
+            let _ = (ctx, tx, settings);
             Self { commands }
         }
     }
@@ -68,13 +81,8 @@ impl AppMenu {
     }
 
     /// Where there is no native menu, shows the menu bar at the top of `ui` and returns the
-    /// commands chosen in it. `shift_enter_sends` and `toolbar` tick the settings.
-    pub fn window_bar(
-        &self,
-        ui: &mut egui::Ui,
-        shift_enter_sends: bool,
-        toolbar: bool,
-    ) -> Vec<Command> {
+    /// commands chosen in it, ticked as `settings`.
+    pub fn window_bar(&self, ui: &mut egui::Ui, settings: Settings) -> Vec<Command> {
         let mut commands = Vec::new();
         if cfg!(target_os = "macos") {
             return commands;
@@ -102,13 +110,19 @@ impl AppMenu {
                         commands.push(Command::Stop);
                     }
                     ui.separator();
-                    let mut checked = shift_enter_sends;
-                    if ui.checkbox(&mut checked, "Send with Shift+Enter").clicked() {
-                        commands.push(Command::ToggleShiftEnterSends);
-                    }
-                    let mut checked = toolbar;
-                    if ui.checkbox(&mut checked, "Show Toolbar").clicked() {
-                        commands.push(Command::ToggleToolbar);
+                    let toggles = [
+                        (
+                            settings.shift_enter_sends,
+                            "Send with Shift+Enter",
+                            Command::ToggleShiftEnterSends,
+                        ),
+                        (settings.toolbar, "Show Toolbar", Command::ToggleToolbar),
+                        (settings.images, "Model Reads Images", Command::ToggleImages),
+                    ];
+                    for (mut checked, text, command) in toggles {
+                        if ui.checkbox(&mut checked, text).clicked() {
+                            commands.push(command);
+                        }
                     }
                     ui.separator();
                     if item(ui, "Quit", quit) {
@@ -128,13 +142,14 @@ fn command_of(id: &str) -> Option<Command> {
         "stop" => Command::Stop,
         "shift_enter_sends" => Command::ToggleShiftEnterSends,
         "toolbar" => Command::ToggleToolbar,
+        "images" => Command::ToggleImages,
         "quit" => Command::Quit,
         _ => return None,
     })
 }
 
 #[cfg(target_os = "macos")]
-fn build() -> muda::Result<muda::Menu> {
+fn build(settings: Settings) -> muda::Result<muda::Menu> {
     use muda::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
     let item = |id: &str, text: &str, accelerator: &str| {
         MenuItem::with_id(id, text, true, accelerator.parse().ok())
@@ -163,8 +178,13 @@ fn build() -> muda::Result<muda::Menu> {
             &item("new_chat", "New Chat", "CmdOrCtrl+N"),
             &item("stop", "Stop Answer", "CmdOrCtrl+Period"),
             &PredefinedMenuItem::separator(),
-            &check("shift_enter_sends", "Send with Shift+Enter", false),
-            &check("toolbar", "Show Toolbar", true),
+            &check(
+                "shift_enter_sends",
+                "Send with Shift+Enter",
+                settings.shift_enter_sends,
+            ),
+            &check("toolbar", "Show Toolbar", settings.toolbar),
+            &check("images", "Model Reads Images", settings.images),
         ],
     )?;
     let window = Submenu::with_items(

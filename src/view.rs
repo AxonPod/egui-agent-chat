@@ -2,33 +2,42 @@
 
 use crate::context::split_context;
 use crate::icons;
-use crate::{SendShortcut, Toolbar, Turn, TurnStatus};
-use agentai::{Message, Part, Role, ToolCall};
+use crate::media::MediaCache;
+use crate::{Composer, InputSettings, Note, SessionMarks, Toolbar, Turn, TurnStatus};
+use agentai::{Media, Message, Part, Prompt, Role, ToolCall};
 use egui::{
     Align, Color32, CornerRadius, Frame, Layout, Margin, RichText, ScrollArea, TextEdit, TextStyle,
     Ui,
 };
 use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 pub enum InputAction {
-    Send(String),
+    Send(Prompt),
     Stop,
+}
+
+/// What drawing keeps between frames.
+#[derive(Default)]
+pub struct Caches {
+    pub markdown: CommonMarkCache,
+    pub media: MediaCache,
 }
 
 /// Space between the chat and the edges of its `Ui`.
 const MARGIN: i8 = 12;
 
-/// The input at the bottom, with the toolbar below it unless `toolbar` is off: the host's
-/// widgets from `add_widgets` on the left, Send or Stop on the right.
+/// The input at the bottom: the attached images, the text field and, unless the toolbar is
+/// off, the toolbar with the host's widgets from `add_widgets` on the left and Send or Stop on
+/// the right.
 pub fn input(
     ui: &mut Ui,
-    text: &mut String,
+    composer: &mut Composer,
     running: bool,
-    send_shortcut: SendShortcut,
-    toolbar: bool,
+    settings: InputSettings,
+    cache: &mut Caches,
     add_widgets: impl FnOnce(&mut Toolbar<'_>),
 ) -> Option<InputAction> {
     let mut action = None;
@@ -44,19 +53,30 @@ pub fn input(
             let id = ui.scope_id().with("chat_input_text");
             let focused = ui.memory(|m| m.has_focus(id));
             // Taken before the text field, which would add a line
-            let mut send = focused && ui.input_mut(|i| send_shortcut.consume(i));
+            let mut send = focused && ui.input_mut(|i| settings.send_shortcut.consume(i));
+            if settings.capabilities.images && ui.input(|i| !i.raw.hovered_files.is_empty()) {
+                ui.label(RichText::new(format!("{} Drop images to attach", icons::IMAGE)).weak());
+            }
+            attachments(ui, &mut composer.attachments, &mut cache.media);
             ui.add(
-                TextEdit::multiline(text)
+                TextEdit::multiline(&mut composer.text)
                     .id(id)
                     .desired_rows(3)
-                    .hint_text(send_shortcut.hint(ui.ctx()))
+                    .hint_text(settings.send_shortcut.hint(ui.ctx()))
                     .desired_width(f32::INFINITY),
             );
-            if toolbar {
+            if settings.toolbar {
                 ui.add_space(4.0);
                 egui::Sides::new().show(
                     ui,
-                    |ui| add_widgets(&mut Toolbar::new(ui, text, running)),
+                    |ui| {
+                        add_widgets(&mut Toolbar::new(
+                            ui,
+                            composer,
+                            running,
+                            settings.capabilities,
+                        ))
+                    },
                     |ui| {
                         if running {
                             if ui.button(format!("{} Stop", icons::SQUARE)).clicked() {
@@ -68,20 +88,66 @@ pub fn input(
                     },
                 );
             }
-            if send && !running && !text.trim().is_empty() {
-                action = Some(InputAction::Send(std::mem::take(text).trim().to_string()));
+            if send
+                && !running
+                && let Some(prompt) = composer.take_prompt()
+            {
+                action = Some(InputAction::Send(prompt));
             }
         });
     action
 }
 
+/// Largest size of an image in the message being written.
+const ATTACHMENT_SIZE: egui::Vec2 = egui::vec2(96.0, 64.0);
+/// Largest size of an image in a sent message.
+const MESSAGE_IMAGE_SIZE: egui::Vec2 = egui::vec2(240.0, 240.0);
+
+/// The images attached to the message being written, each with a button that removes it.
+fn attachments(ui: &mut Ui, attachments: &mut Vec<Media>, cache: &mut MediaCache) {
+    if attachments.is_empty() {
+        return;
+    }
+    let mut remove = None;
+    ui.horizontal_wrapped(|ui| {
+        for (i, media) in attachments.iter().enumerate() {
+            ui.push_id(i, |ui| {
+                let name = media.name.as_deref().unwrap_or("image");
+                match cache.image(media) {
+                    Some(image) => {
+                        let image = image
+                            .fit_to_original_size(1.0)
+                            .max_size(ATTACHMENT_SIZE)
+                            .corner_radius(CornerRadius::same(6));
+                        ui.add(image).on_hover_text(name);
+                    }
+                    None => {
+                        ui.label(format!("{} {name}", icons::PAPERCLIP));
+                    }
+                }
+                let button = ui.small_button(icons::X).on_hover_text("Remove");
+                // Screen readers say "Remove", not the icon
+                button
+                    .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Remove"));
+                if button.clicked() {
+                    remove = Some(i);
+                }
+            });
+        }
+    });
+    if let Some(i) = remove {
+        attachments.remove(i);
+    }
+    ui.add_space(4.0);
+}
+
 /// The stored history, then the running or unfinished turn.
 pub fn conversation(
     ui: &mut Ui,
-    cache: &mut CommonMarkCache,
+    cache: &mut Caches,
     history: &[Message],
     turn: Option<&Turn>,
-    failed_tools: &HashSet<String>,
+    marks: &SessionMarks,
 ) {
     ScrollArea::vertical()
         .auto_shrink(false)
@@ -89,16 +155,16 @@ pub fn conversation(
         .show(ui, |ui| {
             Frame::new()
                 .inner_margin(Margin::symmetric(MARGIN, 0))
-                .show(ui, |ui| messages(ui, cache, history, turn, failed_tools));
+                .show(ui, |ui| messages(ui, cache, history, turn, marks));
         });
 }
 
 fn messages(
     ui: &mut Ui,
-    cache: &mut CommonMarkCache,
+    cache: &mut Caches,
     history: &[Message],
     turn: Option<&Turn>,
-    failed_tools: &HashSet<String>,
+    marks: &SessionMarks,
 ) {
     ui.set_width(ui.available_width());
     if history.is_empty() && turn.is_none() {
@@ -106,12 +172,21 @@ fn messages(
         ui.vertical_centered(|ui| ui.weak("No messages yet"));
     }
     ui.push_id("history", |ui| {
-        show_messages(ui, cache, history, failed_tools, false);
+        show_messages(ui, cache, history, &marks.failed_tools, &marks.notes, false);
     });
     if let Some(turn) = turn {
         ui.push_id("turn", |ui| {
             let running = turn.status == TurnStatus::Running;
-            show_messages(ui, cache, &turn.messages, failed_tools, running);
+            // The notes are for the history, not for the turn
+            let no_notes = HashMap::new();
+            show_messages(
+                ui,
+                cache,
+                &turn.messages,
+                &marks.failed_tools,
+                &no_notes,
+                running,
+            );
             match &turn.status {
                 TurnStatus::Running => {}
                 TurnStatus::Cancelled => {
@@ -137,13 +212,15 @@ enum Speaker {
 struct Group<'a> {
     speaker: Speaker,
     messages: Vec<&'a Message>,
+    /// The index of the group's last message in the list it came from.
+    last: usize,
 }
 
 /// Groups messages into bubbles: the assistant messages and tool results that follow a user
 /// message form one group. Other roles are not shown.
 fn groups(messages: &[Message]) -> Vec<Group<'_>> {
     let mut groups: Vec<Group> = Vec::new();
-    for message in messages {
+    for (i, message) in messages.iter().enumerate() {
         let speaker = match message.role {
             Role::User => Speaker::User,
             Role::Assistant | Role::Tool => Speaker::Agent,
@@ -151,11 +228,13 @@ fn groups(messages: &[Message]) -> Vec<Group<'_>> {
         };
         match groups.last_mut() {
             Some(group) if speaker == Speaker::Agent && group.speaker == Speaker::Agent => {
-                group.messages.push(message)
+                group.messages.push(message);
+                group.last = i;
             }
             _ => groups.push(Group {
                 speaker,
                 messages: vec![message],
+                last: i,
             }),
         }
     }
@@ -179,9 +258,10 @@ fn tool_result<'a>(messages: &[&'a Message], call_id: &str) -> Option<&'a str> {
 /// not answered yet.
 fn show_messages(
     ui: &mut Ui,
-    cache: &mut CommonMarkCache,
+    cache: &mut Caches,
     messages: &[Message],
     failed_tools: &HashSet<String>,
+    notes: &HashMap<usize, Note>,
     running: bool,
 ) {
     let mut groups = groups(messages);
@@ -189,6 +269,7 @@ fn show_messages(
         groups.push(Group {
             speaker: Speaker::Agent,
             messages: Vec::new(),
+            last: usize::MAX,
         });
     }
     let last = groups.len().saturating_sub(1);
@@ -196,8 +277,25 @@ fn show_messages(
         ui.add_space(GROUP_SPACING);
         ui.push_id(i, |ui| match group.speaker {
             Speaker::User => show_user(ui, cache, group),
-            Speaker::Agent => show_agent(ui, cache, group, failed_tools, running && i == last),
+            Speaker::Agent => {
+                show_agent(ui, cache, group, failed_tools, running && i == last);
+                if let Some(note) = notes.get(&group.last) {
+                    show_note(ui, note);
+                }
+            }
         });
+    }
+}
+
+/// How a reply that is in the history ended early.
+fn show_note(ui: &mut Ui, note: &Note) {
+    match note {
+        Note::Stopped => {
+            ui.weak("Stopped.");
+        }
+        Note::Failed(error) => {
+            ui.colored_label(ui.visuals().error_fg_color, format!("Error: {error}"));
+        }
     }
 }
 
@@ -211,11 +309,17 @@ fn spinner(ui: &mut Ui) {
 }
 
 /// The user's message: a bubble in the accent color, on the right.
-fn show_user(ui: &mut Ui, cache: &mut CommonMarkCache, group: &Group) {
+fn show_user(ui: &mut Ui, cache: &mut Caches, group: &Group) {
     let fill = ui.visuals().selection.bg_fill;
     let margin = Margin::symmetric(12, 8);
     let max_width = ui.available_width() * 0.8 - margin.sum().x;
-    let width = user_text_width(ui, group).min(max_width);
+    let parts = || group.messages.iter().flat_map(|m| &m.parts);
+    let has_media = parts().any(|part| matches!(part, Part::Media(_)));
+    let mut width = user_text_width(ui, group);
+    if has_media {
+        width = width.max(MESSAGE_IMAGE_SIZE.x);
+    }
+    let width = width.min(max_width);
     ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
         Frame::new()
             .fill(fill)
@@ -225,7 +329,18 @@ fn show_user(ui: &mut Ui, cache: &mut CommonMarkCache, group: &Group) {
                 ui.set_width(width);
                 ui.visuals_mut().override_text_color = Some(ui.visuals().strong_text_color());
                 ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                    for (i, part) in group.messages.iter().flat_map(|m| &m.parts).enumerate() {
+                    // Pictures first, as chat apps show them, then the text
+                    if has_media {
+                        ui.horizontal_wrapped(|ui| {
+                            for media in parts().filter_map(|part| match part {
+                                Part::Media(media) => Some(media),
+                                _ => None,
+                            }) {
+                                show_media(ui, &mut cache.media, media);
+                            }
+                        });
+                    }
+                    for (i, part) in parts().enumerate() {
                         if let Part::Text(text) = part {
                             ui.push_id(i, |ui| show_user_text(ui, cache, text));
                         }
@@ -233,6 +348,24 @@ fn show_user(ui: &mut Ui, cache: &mut CommonMarkCache, group: &Group) {
                 });
             });
     });
+}
+
+/// An image of a sent message, or the name of a file that is not one.
+fn show_media(ui: &mut Ui, cache: &mut MediaCache, media: &Media) {
+    let name = media.name.as_deref().unwrap_or(&media.content_type);
+    match cache.image(media) {
+        Some(image) => {
+            // Its own size, not the height of the row it is in, up to the maximum
+            let image = image
+                .fit_to_original_size(1.0)
+                .max_size(MESSAGE_IMAGE_SIZE)
+                .corner_radius(CornerRadius::same(8));
+            ui.add(image).on_hover_text(name);
+        }
+        None => {
+            ui.label(format!("{} {name}", icons::PAPERCLIP));
+        }
+    }
 }
 
 /// The width of the user's text without wrapping, so short messages get small bubbles. It is
@@ -278,7 +411,7 @@ fn user_text_width(ui: &Ui, group: &Group) -> f32 {
 /// The agent's answer, on the background: its reasoning, tool calls and text, in order.
 fn show_agent(
     ui: &mut Ui,
-    cache: &mut CommonMarkCache,
+    cache: &mut Caches,
     group: &Group,
     failed_tools: &HashSet<String>,
     running: bool,
@@ -300,7 +433,7 @@ fn show_agent(
         for (j, part) in reasoning.into_iter().chain(rest) {
             ui.push_id((i, j), |ui| match part {
                 Part::Text(text) if !text.trim().is_empty() => {
-                    CommonMarkViewer::new().show(ui, cache, text);
+                    CommonMarkViewer::new().show(ui, &mut cache.markdown, text);
                 }
                 Part::Reasoning(text) if !text.trim().is_empty() => {
                     egui::CollapsingHeader::new(
@@ -322,7 +455,7 @@ fn show_agent(
 }
 
 /// The user's text, plain, after its context blocks.
-fn show_user_text(ui: &mut Ui, cache: &mut CommonMarkCache, text: &str) {
+fn show_user_text(ui: &mut Ui, cache: &mut Caches, text: &str) {
     let (contexts, rest) = split_context(text);
     for (i, context) in contexts.iter().enumerate() {
         egui::CollapsingHeader::new(
@@ -331,11 +464,11 @@ fn show_user_text(ui: &mut Ui, cache: &mut CommonMarkCache, text: &str) {
         .id_salt(("context", i))
         .default_open(false)
         .show(ui, |ui| {
-            CommonMarkViewer::new().show(ui, cache, context.body);
+            CommonMarkViewer::new().show(ui, &mut cache.markdown, context.body);
         });
     }
     if !rest.is_empty() {
-        CommonMarkViewer::new().show(ui, cache, &hard_line_breaks(&rest));
+        CommonMarkViewer::new().show(ui, &mut cache.markdown, &hard_line_breaks(&rest));
     }
 }
 
