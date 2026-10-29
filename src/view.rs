@@ -4,7 +4,7 @@ use crate::context::split_context;
 use crate::icons;
 use crate::media::MediaCache;
 use crate::{Composer, InputSettings, Note, SessionMarks, Toolbar, Turn, TurnStatus};
-use agentai::{Media, Message, Part, Prompt, Role, ToolCall};
+use agentai::{Media, Message, Part, Prompt, Role, ToolCall, ToolResponse};
 use egui::{
     Align, Color32, CornerRadius, Frame, Layout, Margin, RichText, ScrollArea, TextEdit, TextStyle,
     Ui,
@@ -242,14 +242,12 @@ fn groups(messages: &[Message]) -> Vec<Group<'_>> {
 }
 
 /// The result of the tool call `call_id`, `None` while the tool runs.
-fn tool_result<'a>(messages: &[&'a Message], call_id: &str) -> Option<&'a str> {
+fn tool_result<'a>(messages: &[&'a Message], call_id: &str) -> Option<&'a ToolResponse> {
     messages
         .iter()
         .flat_map(|m| &m.parts)
         .find_map(|part| match part {
-            Part::ToolResponse(response) if response.call_id == call_id => {
-                Some(response.content.as_str())
-            }
+            Part::ToolResponse(response) if response.call_id == call_id => Some(response),
             _ => None,
         })
 }
@@ -444,6 +442,7 @@ fn show_agent(
                 }
                 Part::ToolCall(call) => show_tool(
                     ui,
+                    &mut cache.media,
                     call,
                     tool_result(&group.messages, &call.id),
                     failed_tools.contains(&call.id),
@@ -507,8 +506,15 @@ fn continues_paragraph(line: &str) -> bool {
         && !starts_list_item()
 }
 
-fn show_tool(ui: &mut Ui, call: &ToolCall, result: Option<&str>, is_error: bool) {
-    let status = match (result, is_error) {
+fn show_tool(
+    ui: &mut Ui,
+    cache: &mut MediaCache,
+    call: &ToolCall,
+    response: Option<&ToolResponse>,
+    is_error: bool,
+) {
+    let result = response.map(|r| r.text().unwrap_or_default());
+    let status = match (&result, is_error) {
         (None, _) => icons::HOURGLASS,
         (Some(_), true) => icons::TRIANGLE_ALERT,
         (Some(_), false) => icons::CHECK,
@@ -524,7 +530,7 @@ fn show_tool(ui: &mut Ui, call: &ToolCall, result: Option<&str>, is_error: bool)
         .show(ui, |ui| {
             ui.label(RichText::new("Arguments").strong());
             json_tree(ui, &call.arguments);
-            match result {
+            match &result {
                 None => {
                     ui.horizontal(|ui| {
                         spinner(ui);
@@ -537,8 +543,18 @@ fn show_tool(ui: &mut Ui, call: &ToolCall, result: Option<&str>, is_error: bool)
                 }
             }
         });
-    // Pictures named in the result are shown below the call, always visible
-    if let Some(result) = result {
+    // Pictures in or named in the result are shown below the call, always visible
+    for media in response
+        .iter()
+        .flat_map(|r| &r.content)
+        .filter_map(|part| match part {
+            Part::Media(media) => Some(media),
+            _ => None,
+        })
+    {
+        show_media(ui, cache, media);
+    }
+    if let Some(result) = &result {
         for path in image_paths(result) {
             ui.add(
                 egui::Image::new(format!("file://{path}"))
@@ -631,7 +647,6 @@ fn image_paths(text: &str) -> Vec<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentai::ToolResponse;
     use serde_json::json;
 
     #[test]
@@ -663,7 +678,8 @@ mod tests {
         let speakers: Vec<_> = groups.iter().map(|g| g.speaker).collect();
         assert_eq!(speakers, [Speaker::User, Speaker::Agent, Speaker::User]);
         assert_eq!(groups[1].messages.len(), 3);
-        assert_eq!(tool_result(&groups[1].messages, "c1"), Some("saved /a.png"));
+        let result = tool_result(&groups[1].messages, "c1").and_then(ToolResponse::text);
+        assert_eq!(result.as_deref(), Some("saved /a.png"));
         assert_eq!(tool_result(&groups[1].messages, "c2"), None);
     }
 }

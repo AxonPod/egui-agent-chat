@@ -1,6 +1,6 @@
 [package]
 name = "egui-agent-chat"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "An egui chat widget for agentai agents: streamed answers, reasoning and tool calls"
 license = "MIT OR Apache-2.0"
@@ -20,7 +20,8 @@ tokio = ["dep:tokio"]
 smol = ["dep:smol", "dep:async-compat"]
 
 [dependencies]
-agentai = "0.4.0"
+# agentai 0.5 is not released yet: the local checkout, with the genai it needs (see the patch)
+agentai = { path = "../rust-agentai/crates/agentai" }
 async-compat = { version = "0.2.6", optional = true }
 base64 = "0.23.1"
 egui = "0.37"
@@ -47,6 +48,10 @@ rfd = "0.17"
 schemars = "1.2"
 serde = { version = "1.0.229", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread"] }
+
+# Tool results with images need a genai release that is not on crates.io yet
+[patch.crates-io]
+genai = { path = "../rust-genai" }
 
 [[test]]
 name = "agent"

@@ -1,6 +1,7 @@
 //! Runs one agent turn as a background task and passes its events to the UI thread.
 
 use crate::spawn::Spawn;
+use agentai::tool::ToolOutput;
 use agentai::{Agent, AgentEvent, Message, Part, Prompt, Role, ToolCall};
 use futures_util::StreamExt;
 use futures_util::future::{AbortHandle, abortable};
@@ -14,7 +15,7 @@ pub enum Update {
     ToolCall(ToolCall),
     ToolResult {
         call_id: String,
-        content: String,
+        content: ToolOutput,
         is_error: bool,
     },
     /// The messages to append to the history.

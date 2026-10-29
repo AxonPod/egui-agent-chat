@@ -5,16 +5,20 @@ mod common;
 
 use egui::accesskit::Role;
 use egui::{Event, Key, KeyboardShortcut, Modifiers};
-use egui_agent_chat::{ChatPanel, SendShortcut};
+use egui_agent_chat::{ChatEvent, ChatPanel, SendShortcut};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
+use std::cell::RefCell;
 use std::net::TcpListener;
+use std::rc::Rc;
 
 fn harness(
     runtime: &tokio::runtime::Runtime,
     setup: impl FnOnce(&mut ChatPanel),
 ) -> Harness<'static, ChatPanel> {
-    harness_with_ui(runtime, setup, |ui, chat| chat.ui(ui))
+    harness_with_ui(runtime, setup, |ui, chat| {
+        chat.ui(ui);
+    })
 }
 
 fn harness_with_ui(
@@ -91,6 +95,32 @@ fn empty_input_is_not_sent() {
 }
 
 #[test]
+fn sending_and_stopping_are_reported() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let seen = events.clone();
+    let mut harness = harness_with_ui(
+        &runtime,
+        |_| {},
+        move |ui, chat| seen.borrow_mut().extend(chat.ui(ui)),
+    );
+    harness.event(Event::Text("hi".into()));
+    harness.key_press(Key::Enter);
+    harness.step();
+    assert_eq!(*events.borrow(), [ChatEvent::TurnStarted]);
+
+    harness.get_by_label_contains("Stop").click();
+    harness.run();
+    assert_eq!(
+        *events.borrow(),
+        [
+            ChatEvent::TurnStarted,
+            ChatEvent::TurnStopped { kept: false }
+        ]
+    );
+}
+
+#[test]
 fn toolbar_can_be_hidden() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     assert!(
@@ -119,7 +149,7 @@ fn own_toolbar_widgets_can_change_the_input() {
                 if toolbar.button("Attach").clicked() {
                     toolbar.input().push_str("/tmp/file.txt");
                 }
-            })
+            });
         },
     );
     harness.event(Event::Text("Read ".into()));

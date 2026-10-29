@@ -68,7 +68,6 @@ impl MediaCache {
                 let uri = format!("bytes://egui-agent-chat/{key:016x}.{extension}");
                 Some(egui::Image::from_bytes(uri, bytes))
             }
-            _ => None,
         }
     }
 }

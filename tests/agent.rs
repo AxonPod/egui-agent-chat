@@ -24,7 +24,9 @@ fn chat_with(spawner: impl Spawn, setup: impl FnOnce(Agent) -> Agent) -> ChatPan
 
 /// Draws one frame, discarding its output.
 fn frame(ctx: &egui::Context, chat: &mut ChatPanel) {
-    let mut output = ctx.run_ui(egui::RawInput::default(), |ui| chat.ui(ui));
+    let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+        chat.ui(ui);
+    });
     output.textures_delta.clear();
 }
 
@@ -109,7 +111,7 @@ fn tool_call_and_result_are_in_history() {
         .expect("a tool call");
     assert_eq!(call.name, "add");
     assert!(history.iter().flat_map(|m| &m.parts).any(
-        |p| matches!(p, Part::ToolResponse(r) if r.call_id == call.id && r.content == "5555")
+        |p| matches!(p, Part::ToolResponse(r) if r.call_id == call.id && r.text().as_deref() == Some("5555"))
     ));
 }
 

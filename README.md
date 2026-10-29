@@ -9,21 +9,22 @@ agents. Drop it into your app, give it your `Agent`, and get:
 
 - answers streamed in as they are written, rendered as Markdown,
 - collapsible reasoning ("Thinking") and tool calls with their arguments and results,
-- pictures named in tool results shown below the call,
+- images returned by tools, or named in their results, shown below the call,
 - images in prompts for vision models: dropped on the chat or attached from your code,
 - an input where Enter sends and Shift+Enter adds a line (or another shortcut you choose), and
   Stop interrupts the answer,
-- the conversation as a plain `Vec<agentai::Message>`, easy to save and restore.
+- the conversation as a plain `Vec<agentai::Message>`, easy to save and restore,
+- events for your app: a turn started, finished, was stopped or failed, a tool was called.
 
 ## Quick start
 
 ```toml
 [dependencies]
-agentai = "0.4"
-egui-agent-chat = "0.1"
+agentai = "0.5"
+egui-agent-chat = "0.2"
 ```
 
-The agent comes from your own `agentai` dependency; use 0.4, the version this crate uses.
+The agent comes from your own `agentai` dependency; use 0.5, the version this crate uses.
 
 ```rust
 use agentai::Agent;
@@ -53,6 +54,25 @@ For AI coding agents, [`llms.txt`](https://github.com/AxonPod/egui-agent-chat/bl
 | `set_input(text)`       | Puts text into the input, e.g. a suggestion               |
 | `history()`             | The conversation, to save it                              |
 | `set_history(messages)` | Restores a conversation; an empty one starts a new chat   |
+
+## Reacting to what happens in the chat
+
+`ui` returns the `ChatEvent`s of the frame, in order: `TurnStarted`, `ToolCalled`,
+`ToolFinished`, then `TurnFinished`, `TurnStopped { kept }` or `TurnFailed { error, kept }`.
+`kept` says whether the reply so far went into the history.
+
+```rust
+use egui_agent_chat::ChatEvent;
+
+for event in chat.ui(ui) {
+    match event {
+        // The history has grown: a good moment to save it
+        ChatEvent::TurnFinished | ChatEvent::TurnStopped { kept: true } => save(chat.history()),
+        ChatEvent::TurnFailed { error, .. } => eprintln!("the turn failed: {error}"),
+        _ => {}
+    }
+}
+```
 
 ## Customizing behavior
 
@@ -170,10 +190,11 @@ cargo test --test agent --features smol -- --ignored
 
 ## Releasing
 
-Bump `version` in `Cargo.toml`, commit, then push a matching tag:
+Bump `version` in `Cargo.toml`, add its section to `CHANGELOG.md`, commit, then push a
+matching tag:
 
 ```sh
-git tag v0.1.0 && git push origin v0.1.0
+git tag v0.2.0 && git push origin v0.2.0
 ```
 
 `.github/workflows/release.yml` runs CI, publishes to crates.io and creates a GitHub release.

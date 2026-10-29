@@ -15,7 +15,7 @@ mod menu;
 use agentai::tool::buildin::CurrentDateAndTimeToolBox;
 use agentai::{Agent, Media};
 use anyhow::{Context, Result, anyhow};
-use egui_agent_chat::{ChatPanel, ModelCapabilities, SendShortcut, icons};
+use egui_agent_chat::{ChatEvent, ChatPanel, ModelCapabilities, SendShortcut, icons};
 use menu::{AppMenu, Command, Settings};
 
 #[cfg(not(any(feature = "tokio", feature = "smol")))]
@@ -146,7 +146,7 @@ impl eframe::App for ChatApp {
         for command in self.menu.window_bar(ui, self.settings) {
             self.handle(&ctx, command);
         }
-        self.chat.ui_with_toolbar(ui, |toolbar| {
+        let events = self.chat.ui_with_toolbar(ui, |toolbar| {
             // Off for a text-only model, which could not read the image
             let images = toolbar.capabilities().images;
             let attach = toolbar
@@ -165,5 +165,13 @@ impl eframe::App for ChatApp {
                 toolbar.attach(image);
             }
         });
+        // The chat shows all of this too; an app could save the history or update its status
+        for event in events {
+            match event {
+                ChatEvent::ToolCalled(call) => eprintln!("tool: {}", call.name),
+                ChatEvent::TurnFailed { error, .. } => eprintln!("the turn failed: {error}"),
+                _ => {}
+            }
+        }
     }
 }

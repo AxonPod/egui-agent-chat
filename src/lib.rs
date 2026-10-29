@@ -2,7 +2,7 @@
 //!
 //! [`ChatPanel`] shows a conversation with an [`Agent`]: answers stream in as they are
 //! written, reasoning and tool calls (with their arguments and results) are collapsible, and
-//! pictures named in tool results are shown below the call. The user writes in the input at
+//! images in or named in tool results are shown below the call. The user writes in the input at
 //! the bottom: Enter sends, Shift+Enter adds a line, and a running answer can be stopped.
 //! [`ChatPanel::set_send_shortcut`] picks another key combination for sending, e.g.
 //! Shift+Enter for mostly multi-line messages, and [`ChatPanel::set_toolbar`] hides the
@@ -11,7 +11,7 @@
 //!
 //! # Usage
 //!
-//! Build your agent with your own `agentai` dependency (0.4, the version this crate uses), then create the panel once with the agent and a [`Spawn`] that runs it on your async
+//! Build your agent with your own `agentai` dependency (0.5, the version this crate uses), then create the panel once with the agent and a [`Spawn`] that runs it on your async
 //! runtime, and call [`ChatPanel::ui`] every frame. With eframe and tokio:
 //!
 //! ```no_run
@@ -47,6 +47,27 @@
 //! The panel fills the `Ui` it gets; put it in a side panel or a window to share the screen.
 //! Messages can also be sent from code with [`ChatPanel::send`].
 //!
+//! # Events
+//!
+//! [`ChatPanel::ui`] returns the [`ChatEvent`]s of the frame: a turn started, a tool was called
+//! or returned, and the turn finished, was stopped or failed. Use them, for example, to save
+//! the history when it grows or to show a status:
+//!
+//! ```no_run
+//! # fn save(_: &[agentai::Message]) {}
+//! # fn show(chat: &mut egui_agent_chat::ChatPanel, ui: &mut egui::Ui) {
+//! use egui_agent_chat::ChatEvent;
+//!
+//! for event in chat.ui(ui) {
+//!     match event {
+//!         ChatEvent::TurnFinished | ChatEvent::TurnStopped { kept: true } => save(chat.history()),
+//!         ChatEvent::TurnFailed { error, .. } => eprintln!("the turn failed: {error}"),
+//!         _ => {}
+//!     }
+//! }
+//! # }
+//! ```
+//!
 //! # Async runtime
 //!
 //! Each turn of the agent runs as a background task started through [`Spawn`]. It is
@@ -73,7 +94,8 @@
 //! picker. Attached images show above the input and go with the next message; sent ones show
 //! in the user's bubble. A text-only model, the default, gets none of this.
 //!
-//! Absolute paths of PNG, JPEG or WebP files in tool results are shown as pictures too.
+//! Images that tools return (agentai's `ToolOutput` with media) are shown below their call,
+//! and so are absolute paths of PNG, JPEG or WebP files in tool results.
 //! Drawing images needs image loaders installed in your app, for example with
 //! `egui_extras::install_image_loaders`.
 //!
@@ -86,6 +108,7 @@
 
 mod capabilities;
 mod context;
+mod event;
 pub mod icons;
 mod media;
 mod run;
@@ -96,6 +119,7 @@ mod view;
 
 pub use capabilities::ModelCapabilities;
 pub use context::{ContextBlock, context_block, split_context};
+pub use event::ChatEvent;
 pub use shortcut::SendShortcut;
 #[cfg(feature = "smol")]
 pub use spawn::SmolGlobal;
@@ -212,6 +236,8 @@ pub struct ChatPanel {
     composer: Composer,
     settings: InputSettings,
     cache: view::Caches,
+    /// Not yet returned by `ui`.
+    events: Vec<ChatEvent>,
 }
 
 impl ChatPanel {
@@ -232,6 +258,7 @@ impl ChatPanel {
                 capabilities: ModelCapabilities::default(),
             },
             cache: view::Caches::default(),
+            events: Vec::new(),
         }
     }
 
@@ -273,7 +300,8 @@ impl ChatPanel {
     }
 
     /// Replaces the conversation, stopping a running turn and clearing the input and its
-    /// attachments. An empty history starts a new chat.
+    /// attachments. An empty history starts a new chat. The stopped turn sends no
+    /// [`ChatEvent`].
     pub fn set_history(&mut self, history: Vec<Message>) {
         self.turn = None;
         self.marks = SessionMarks::default();
@@ -300,6 +328,9 @@ impl ChatPanel {
     /// `Prompt::text("What is in it?").with_image_bytes("image/png", &png)`. The chat does
     /// not check those images against [`set_capabilities`](Self::set_capabilities).
     pub fn send(&mut self, ctx: &egui::Context, prompt: impl IntoPrompt) {
+        if self.is_running() {
+            self.events.push(ChatEvent::TurnStopped { kept: false });
+        }
         let prompt = prompt.into_prompt();
         let shown = Message::new(Role::User, prompt.parts().to_vec());
         let running = run::spawn(
@@ -315,6 +346,7 @@ impl ChatPanel {
             status: TurnStatus::Running,
             running: Some(running),
         });
+        self.events.push(ChatEvent::TurnStarted);
     }
 
     /// Stops the running turn. If the agent has already started its reply (text or a tool
@@ -334,7 +366,16 @@ impl ChatPanel {
         };
         // Dropping it stops the task
         turn.running = None;
-        if let Some(messages) = started_reply(&turn.messages) {
+        let started = started_reply(&turn.messages);
+        let kept = started.is_some();
+        self.events.push(match &note {
+            Note::Stopped => ChatEvent::TurnStopped { kept },
+            Note::Failed(error) => ChatEvent::TurnFailed {
+                error: error.clone(),
+                kept,
+            },
+        });
+        if let Some(messages) = started {
             self.history.extend(messages);
             self.marks.notes.insert(self.history.len() - 1, note);
         } else {
@@ -348,9 +389,10 @@ impl ChatPanel {
     }
 
     /// Shows the chat in all of `ui`. Call it every frame: it also takes in what the agent
-    /// streamed since the last frame.
-    pub fn ui(&mut self, ui: &mut egui::Ui) {
-        self.ui_with_toolbar(ui, |_| {});
+    /// streamed since the last frame. Returns what happened since the last frame, e.g. that a
+    /// turn finished, see [`ChatEvent`]; ignore it if you don't need it.
+    pub fn ui(&mut self, ui: &mut egui::Ui) -> Vec<ChatEvent> {
+        self.ui_with_toolbar(ui, |_| {})
     }
 
     /// Like [`ui`](Self::ui), with your own widgets on the left of the toolbar below the
@@ -360,7 +402,7 @@ impl ChatPanel {
         &mut self,
         ui: &mut egui::Ui,
         add_widgets: impl FnOnce(&mut Toolbar<'_>),
-    ) {
+    ) -> Vec<ChatEvent> {
         icons::ensure_installed(ui.ctx());
         self.poll();
         self.take_dropped_images(ui.ctx());
@@ -385,6 +427,7 @@ impl ChatPanel {
             self.turn.as_ref(),
             &self.marks,
         );
+        std::mem::take(&mut self.events)
     }
 
     /// Attaches the images dropped on the window, if the model reads images.
@@ -418,6 +461,7 @@ impl ChatPanel {
                     _ => reply(&mut turn.messages).parts.push(Part::Reasoning(delta)),
                 },
                 Update::ToolCall(call) => {
+                    self.events.push(ChatEvent::ToolCalled(call.clone()));
                     reply(&mut turn.messages).parts.push(Part::ToolCall(call));
                 }
                 Update::ToolResult {
@@ -437,6 +481,10 @@ impl ChatPanel {
                         let response = ToolResponse::new(&call, content);
                         turn.messages.push(Message::tool_response(response));
                     }
+                    self.events.push(ChatEvent::ToolFinished {
+                        call_id: call_id.clone(),
+                        is_error,
+                    });
                     if is_error {
                         self.marks.failed_tools.insert(call_id);
                     }
@@ -444,6 +492,7 @@ impl ChatPanel {
                 Update::Finished(messages) => {
                     self.history.extend(messages);
                     self.turn = None;
+                    self.events.push(ChatEvent::TurnFinished);
                     return;
                 }
                 Update::Failed(error) => {

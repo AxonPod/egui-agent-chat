@@ -33,7 +33,8 @@ Prefer `if cfg!(...)` over `#[cfg]` so the code compiles everywhere.
 Live tests and the example read `AGENTAI_MODEL` (and the provider's variables) from the
 environment or `.env`. Variables already set in the shell win over `.env`.
 
-Releases: bump `version` in `Cargo.toml` and push a matching `vX.Y.Z` tag. `release.yml` runs CI,
+Releases: bump `version` in `Cargo.toml`, add its section to `CHANGELOG.md` and push a matching
+`vX.Y.Z` tag. `release.yml` runs CI,
 `cargo publish` (secret `CARGO_REGISTRY_TOKEN`) and creates a GitHub release.
 
 ## Architecture
@@ -41,7 +42,8 @@ Releases: bump `version` in `Cargo.toml` and push a matching `vX.Y.Z` tag. `rele
 - **`ChatPanel` (`src/lib.rs`)** owns everything: the history (`Vec<agentai::Message>`), the
   running `Turn`, the message being written (`Composer`: text and attachments), the input
   settings (send shortcut, toolbar, `ModelCapabilities`) and `SessionMarks`. `ChatPanel::ui`
-  returns nothing and there are no events. The host reads `history()`/`is_running()` and calls
+  returns the frame's `ChatEvent`s (`src/event.rs`), queued in `ChatPanel::events` by `send`,
+  `poll` and `end_early`. The host also reads `history()`/`is_running()` and calls
   `send`/`cancel`/setters. There is exactly one way to start a turn: `send(ctx, impl IntoPrompt)`.
   The input uses it too.
 - **The view is built straight from agentai types.** There is no separate view model.
@@ -85,8 +87,9 @@ Releases: bump `version` in `Cargo.toml` and push a matching `vX.Y.Z` tag. `rele
   message stays running. Query widgets by their accessibility labels; icon-only buttons need an
   explicit `widget_info` label (e.g. "Remove").
 - `tests/turns.rs` runs a fake OpenAI-compatible SSE server (`tests/common/mod.rs` builds the
-  agent with `Agent::from_client`). Use it for deterministic tests of streaming and of ending a
-  turn early.
+  agent with `Agent::from_client`). It streams text, calls a tool, or answers with an HTTP
+  error, one `Reply` per request in order. Use it for deterministic tests of streaming, tools,
+  events and ending a turn early.
 - `tests/agent.rs` is `#[ignore]`d and talks to a real model (text, tools, images, smol).
 - kittest panics on glyphs no installed font has, e.g. egui's ⚠ shown for an image that failed
   to load. Use real images with loaders installed, or `.allow_missing_glyphs()`.
@@ -96,7 +99,10 @@ Releases: bump `version` in `Cargo.toml` and push a matching `vX.Y.Z` tag. `rele
 ## Conventions
 
 - `agentai` is not re-exported: users depend on it themselves, from the same minor line
-  (currently 0.4). When agentai changes, follow its `MIGRATION.md`, which is in the GitHub repo
+  (currently 0.5). When agentai changes, follow its `MIGRATION.md`, which is in the GitHub repo
   `AdamStrojek/rust-agentai`, not in the published crate.
-- Keep the public API small: prefer a setter on `ChatPanel` over new event or callback
-  mechanisms. Every public item needs docs (`#![warn(missing_docs)]`).
+- Until agentai 0.5 is released, `Cargo.toml` takes it from the local checkout
+  `../rust-agentai` and patches genai to `../rust-genai`. CI cannot build that; switch both to
+  crates.io versions before pushing.
+- Keep the public API small: prefer a setter on `ChatPanel`, or a new `ChatEvent` variant, over
+  new callback mechanisms. Every public item needs docs (`#![warn(missing_docs)]`).

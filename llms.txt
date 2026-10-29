@@ -8,12 +8,13 @@
 
 Key facts for integrating:
 
-- `agentai` is not re-exported. Add it as your own dependency, from the `0.4` line this crate
-  uses (0.4.0 or newer), so that both share one `Agent` type.
+- `agentai` is not re-exported. Add it as your own dependency, from the `0.5` line this crate
+  uses (0.5.0 or newer), so that both share one `Agent` type.
 - The widget fills the `egui::Ui` it gets, including its own 12 px margins and an input panel
   at the bottom. To share the screen, put it in a side panel or a window.
-- `ChatPanel::ui` returns nothing, and there are no events. Read the state with `history()` and
-  `is_running()`.
+- `ChatPanel::ui` returns the `ChatEvent`s of the frame: a turn started, finished, was stopped
+  or failed, a tool was called or returned. Ignore them if you don't need them. The state is
+  also readable at any time with `history()` and `is_running()`.
 - A turn runs in the background. The widget asks egui for a repaint whenever data arrives, so
   you don't need to drive repaints yourself.
 - A turn can be stopped, or it can fail, after the agent has started its reply, meaning it has
@@ -28,8 +29,8 @@ Key facts for integrating:
 
 ```toml
 [dependencies]
-agentai = "0.4"
-egui-agent-chat = "0.1"          # feature `tokio` is on by default
+agentai = "0.5"
+egui-agent-chat = "0.2"          # feature `tokio` is on by default
 egui = "0.37"
 eframe = "0.37"                  # or any other egui integration
 tokio = { version = "1", features = ["rt-multi-thread"] }
@@ -78,11 +79,12 @@ fn main() -> anyhow::Result<()> {
 
 - `ChatPanel::new(spawner: impl Spawn, agent: impl Into<Arc<Agent>>) -> ChatPanel`: pass an
   `Agent`, or an `Arc<Agent>` that the rest of your app shares.
-- `ui(&mut self, ui: &mut egui::Ui)`: call it every frame. It also takes in the data that
-  streamed since the last frame.
-- `ui_with_toolbar(&mut self, ui, add_widgets: impl FnOnce(&mut Toolbar<'_>))`: the same as
-  `ui`, plus your own widgets on the left of the toolbar. Call one of the two each frame, not
-  both. See "Custom toolbar widgets".
+- `ui(&mut self, ui: &mut egui::Ui) -> Vec<ChatEvent>`: call it every frame. It also takes in
+  the data that streamed since the last frame, and returns what happened since then. See
+  "Events".
+- `ui_with_toolbar(&mut self, ui, add_widgets: impl FnOnce(&mut Toolbar<'_>)) -> Vec<ChatEvent>`:
+  the same as `ui`, plus your own widgets on the left of the toolbar. Call one of the two each
+  frame, not both. See "Custom toolbar widgets".
 - `send(&mut self, ctx: &egui::Context, prompt: impl agentai::prompt::IntoPrompt)`: sends a
   message from code, with the current history. `prompt` is text or an `agentai::Prompt`, which
   may carry images. A running turn is stopped and replaced. The input uses this method too.
@@ -109,11 +111,41 @@ Configure the agent itself (system prompt, model, tools, max iterations) with `a
 before you pass it in. To change the agent, create a new `ChatPanel` and move the history
 over with `set_history`.
 
+## Events
+
+`ui` and `ui_with_toolbar` return `Vec<egui_agent_chat::ChatEvent>`, in the order things
+happened. The enum is `#[non_exhaustive]`, so match it with a `_` arm:
+
+- `TurnStarted`: a turn started, from the input or from `send`.
+- `ToolCalled(agentai::ToolCall)`: the agent called a tool.
+- `ToolFinished { call_id, is_error }`: that tool returned, or failed.
+- `TurnFinished`: the agent answered; the turn is in `history()`.
+- `TurnStopped { kept }`: stopped with Stop, `cancel()`, or a new `send`. `kept` says whether
+  the reply so far went into the history.
+- `TurnFailed { error, kept }`: the turn failed with `error`. `kept` as above.
+
+Every turn starts with `TurnStarted` and ends with exactly one of the last three, except a
+turn dropped by `set_history`, which ends without an event. Events of `send` or `cancel`
+called outside `ui` come with the next frame.
+
+```rust
+for event in self.chat.ui(ui) {
+    match event {
+        ChatEvent::TurnFailed { error, .. } => self.status = format!("Error: {error}"),
+        _ => {}
+    }
+}
+```
+
+Code that passes `chat.ui(ui)` as the value of a closure that must return `()` needs a `;`:
+`|ui| { chat.ui(ui); }`.
+
 ## Saving and restoring history
 
 `agentai::Message` is serde-serializable, so you can store `chat.history()` and later pass it
-back with `chat.set_history(saved)`. A good moment to save is when `is_running()` changes from
-`true` to `false` and `history().len()` has grown.
+back with `chat.set_history(saved)`. A good moment to save is on `ChatEvent::TurnFinished`, and
+on `TurnStopped { kept: true }` or `TurnFailed { kept: true, .. }`: those are the events after
+which the history has grown.
 
 ## Images
 
@@ -147,8 +179,9 @@ Drawing images needs image loaders (`egui_extras::install_image_loaders`).
 Give the agent a toolbox with `agentai` (`Agent::with_toolbox`, the `#[toolbox]` macro, or
 built-ins such as `agentai::tool::buildin::CurrentDateAndTimeToolBox`). The chat shows each
 call as a row with the tool's name and a status (running / done / failed), its arguments as a
-JSON tree, and the result. If a result contains absolute paths to existing PNG, JPEG or WebP
-files, they appear as pictures below the call. This needs image loaders
+JSON tree, and the result. Images that a tool returns in its `agentai::tool::ToolOutput`
+(`ToolOutput::from_text(..).with_media(media)`) appear below the call, and so do absolute
+paths to existing PNG, JPEG or WebP files named in the result's text. This needs image loaders
 (`egui_extras::install_image_loaders`).
 
 ## Context blocks
