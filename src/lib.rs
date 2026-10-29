@@ -131,6 +131,7 @@ use agentai::{Agent, Media, Message, Part, Prompt, Role, ToolResponse};
 use run::{RunningTurn, Update};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum TurnStatus {
@@ -236,6 +237,8 @@ pub struct ChatPanel {
     composer: Composer,
     settings: InputSettings,
     cache: view::Caches,
+    /// Base of the ids of the chat's widgets, so that two chats in one frame don't share state.
+    id: egui::Id,
     /// Not yet returned by `ui`.
     events: Vec<ChatEvent>,
 }
@@ -258,6 +261,10 @@ impl ChatPanel {
                 capabilities: ModelCapabilities::default(),
             },
             cache: view::Caches::default(),
+            id: {
+                static NEXT: AtomicU64 = AtomicU64::new(0);
+                egui::Id::unique(("egui_agent_chat", NEXT.fetch_add(1, Ordering::Relaxed)))
+            },
             events: Vec::new(),
         }
     }
@@ -409,6 +416,7 @@ impl ChatPanel {
         let running = self.is_running();
         let action = view::input(
             ui,
+            self.id,
             &mut self.composer,
             running,
             self.settings,
@@ -422,6 +430,7 @@ impl ChatPanel {
         }
         view::conversation(
             ui,
+            self.id,
             &mut self.cache,
             &self.history,
             self.turn.as_ref(),

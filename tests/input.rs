@@ -237,3 +237,36 @@ fn an_image_alone_can_be_sent_and_removed() {
     harness.run();
     assert_eq!(harness.get_all_by_label("Remove").count(), 1);
 }
+
+#[test]
+fn two_chats_in_one_frame_have_their_own_input() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let server = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/v1/", server.local_addr().unwrap());
+    let chat = || ChatPanel::new(runtime.handle().clone(), common::local_agent(&url));
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(800.0, 600.0))
+        .build_ui_state(
+            |ui, (left, right): &mut (ChatPanel, ChatPanel)| {
+                ui.columns(2, |columns| {
+                    left.ui(&mut columns[0]);
+                    right.ui(&mut columns[1]);
+                });
+            },
+            (chat(), chat()),
+        );
+    harness.run();
+    harness
+        .get_all_by_role(Role::MultilineTextInput)
+        .next()
+        .unwrap()
+        .click();
+    harness.run();
+    harness.event(Event::Text("left".into()));
+    harness.run();
+    let values: Vec<_> = harness
+        .get_all_by_role(Role::MultilineTextInput)
+        .map(|input| input.value())
+        .collect();
+    assert_eq!(values, [Some("left".to_owned()), Some(String::new())]);
+}

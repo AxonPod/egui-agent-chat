@@ -34,6 +34,7 @@ const MARGIN: i8 = 12;
 /// the right.
 pub fn input(
     ui: &mut Ui,
+    id: egui::Id,
     composer: &mut Composer,
     running: bool,
     settings: InputSettings,
@@ -47,7 +48,7 @@ pub fn input(
         top: 8,
         bottom: MARGIN,
     };
-    egui::Panel::bottom("chat_input")
+    egui::Panel::bottom(id.with("input"))
         .frame(Frame::new().inner_margin(margin))
         .show(ui, |ui| {
             let id = ui.scope_id().with("chat_input_text");
@@ -144,12 +145,14 @@ fn attachments(ui: &mut Ui, attachments: &mut Vec<Media>, cache: &mut MediaCache
 /// The stored history, then the running or unfinished turn.
 pub fn conversation(
     ui: &mut Ui,
+    id: egui::Id,
     cache: &mut Caches,
     history: &[Message],
     turn: Option<&Turn>,
     marks: &SessionMarks,
 ) {
     ScrollArea::vertical()
+        .id_salt(id.with("messages"))
         .auto_shrink(false)
         .stick_to_bottom(true)
         .show(ui, |ui| {

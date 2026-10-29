@@ -19,6 +19,11 @@
   e.g. to know when to save it.
 - Images that tools return in their `ToolOutput` are shown below the call.
 
+### Fixed
+
+- Two chats in one frame (e.g. side by side in `ui.columns`) no longer share the input and
+  scroll state.
+
 ## 0.1.0
 
 First release.
