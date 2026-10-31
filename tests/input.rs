@@ -113,10 +113,7 @@ fn sending_and_stopping_are_reported() {
     harness.run();
     assert_eq!(
         *events.borrow(),
-        [
-            ChatEvent::TurnStarted,
-            ChatEvent::TurnStopped { kept: false }
-        ]
+        [ChatEvent::TurnStarted, ChatEvent::TurnStopped]
     );
 }
 
@@ -231,11 +228,6 @@ fn an_image_alone_can_be_sent_and_removed() {
         harness.query_by_label("Remove").is_none(),
         "the attachment stayed"
     );
-
-    // Stopping puts the image back
-    harness.state_mut().cancel();
-    harness.run();
-    assert_eq!(harness.get_all_by_label("Remove").count(), 1);
 }
 
 #[test]

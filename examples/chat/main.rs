@@ -169,7 +169,7 @@ impl eframe::App for ChatApp {
         for event in events {
             match event {
                 ChatEvent::ToolCalled(call) => eprintln!("tool: {}", call.name),
-                ChatEvent::TurnFailed { error, .. } => eprintln!("the turn failed: {error}"),
+                ChatEvent::TurnFailed { error } => eprintln!("the turn failed: {error}"),
                 _ => {}
             }
         }

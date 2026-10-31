@@ -17,11 +17,11 @@ Key facts for integrating:
   also readable at any time with `history()` and `is_running()`.
 - A turn runs in the background. The widget asks egui for a repaint whenever data arrives, so
   you don't need to drive repaints yourself.
-- A turn can be stopped, or it can fail, after the agent has started its reply, meaning it has
-  written text or called a tool. Then the exchange so far stays in the history, marked
-  "Stopped." or with the error, and the conversation goes on from it. Tool calls without a
-  result are left out. If only reasoning or nothing had come yet, nothing is added, and the
-  prompt goes back to the input, together with its images.
+- A turn that is stopped or fails (e.g. cut off by the token limit while thinking) stays in
+  the history with everything the agent wrote so far, reasoning included, marked "Stopped." or
+  with the error. The conversation goes on from it; the history never rolls back and the
+  prompt does not go back to the input. Only tool calls without a result are left out, as
+  providers refuse them.
 - Images are off by default. Turn them on with `set_capabilities` only when the model reads
   them.
 
@@ -87,12 +87,13 @@ fn main() -> anyhow::Result<()> {
   frame, not both. See "Custom toolbar widgets".
 - `send(&mut self, ctx: &egui::Context, prompt: impl agentai::prompt::IntoPrompt)`: sends a
   message from code, with the current history. `prompt` is text or an `agentai::Prompt`, which
-  may carry images. A running turn is stopped and replaced. The input uses this method too.
+  may carry images. A running turn is stopped first, as with `cancel`. The input uses this
+  method too.
   It does not check images against the capabilities.
-- `cancel(&mut self)`: stops the running turn. A reply that has already started stays in the
-  history. Otherwise the prompt and images go back to the input, if the input is empty.
+- `cancel(&mut self)`: stops the running turn. The prompt and the reply so far stay in the
+  history.
 - `is_running(&self) -> bool`: whether the agent is working on an answer.
-- `history(&self) -> &[agentai::Message]`: every finished turn, including the user's prompts.
+- `history(&self) -> &[agentai::Message]`: every ended turn, including the user's prompts.
 - `set_history(&mut self, Vec<agentai::Message>)`: restores a conversation. It stops a running
   turn and clears the input. Pass `Vec::new()` to start a new chat.
 - `set_input(&mut self, text: impl Into<String>)`: puts text into the input, e.g. a suggestion.
@@ -120,9 +121,9 @@ happened. The enum is `#[non_exhaustive]`, so match it with a `_` arm:
 - `ToolCalled(agentai::ToolCall)`: the agent called a tool.
 - `ToolFinished { call_id, is_error }`: that tool returned, or failed.
 - `TurnFinished`: the agent answered; the turn is in `history()`.
-- `TurnStopped { kept }`: stopped with Stop, `cancel()`, or a new `send`. `kept` says whether
-  the reply so far went into the history.
-- `TurnFailed { error, kept }`: the turn failed with `error`. `kept` as above.
+- `TurnStopped`: stopped with Stop, `cancel()`, or a new `send`; the turn so far is in
+  `history()`.
+- `TurnFailed { error }`: the turn failed with `error`; the turn so far is in `history()`.
 
 Every turn starts with `TurnStarted` and ends with exactly one of the last three, except a
 turn dropped by `set_history`, which ends without an event. Events of `send` or `cancel`
@@ -131,7 +132,7 @@ called outside `ui` come with the next frame.
 ```rust
 for event in self.chat.ui(ui) {
     match event {
-        ChatEvent::TurnFailed { error, .. } => self.status = format!("Error: {error}"),
+        ChatEvent::TurnFailed { error } => self.status = format!("Error: {error}"),
         _ => {}
     }
 }
@@ -143,9 +144,9 @@ Code that passes `chat.ui(ui)` as the value of a closure that must return `()` n
 ## Saving and restoring history
 
 `agentai::Message` is serde-serializable, so you can store `chat.history()` and later pass it
-back with `chat.set_history(saved)`. A good moment to save is on `ChatEvent::TurnFinished`, and
-on `TurnStopped { kept: true }` or `TurnFailed { kept: true, .. }`: those are the events after
-which the history has grown.
+back with `chat.set_history(saved)`. A good moment to save is when a turn ends:
+`ChatEvent::TurnFinished`, `TurnStopped` or `TurnFailed { .. }`. After each of them the history
+has grown.
 
 ## Images
 

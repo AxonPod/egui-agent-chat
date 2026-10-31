@@ -43,7 +43,7 @@ Releases: bump `version` in `Cargo.toml`, add its section to `CHANGELOG.md` and 
   running `Turn`, the message being written (`Composer`: text and attachments), the input
   settings (send shortcut, toolbar, `ModelCapabilities`) and `SessionMarks`. `ChatPanel::ui`
   returns the frame's `ChatEvent`s (`src/event.rs`), queued in `ChatPanel::events` by `send`,
-  `poll` and `end_early`. The host also reads `history()`/`is_running()` and calls
+  `poll` and `cancel`. The host also reads `history()`/`is_running()` and calls
   `send`/`cancel`/setters. There is exactly one way to start a turn: `send(ctx, impl IntoPrompt)`.
   The input uses it too.
 - **The view is built straight from agentai types.** There is no separate view model.
@@ -57,12 +57,14 @@ Releases: bump `version` in `Cargo.toml`, add its section to `CHANGELOG.md` and 
   `futures_util::future::abortable`, and dropping `RunningTurn` aborts it, so cancelling works
   without any runtime API. `Finished` appends agentai's `new_messages` to the history. It also
   works around agentai keeping the final answer's reasoning only in `reasoning_content`.
-- **Ending a turn early (`ChatPanel::end_early`, `started_reply`)**: on Stop or an error, if the
-  agent has already written text or called a tool, the partial exchange goes into the history.
-  Tool calls without a result are dropped, because providers reject them. A `Note` keyed by the
-  index of the reply's last message marks the reply in the chat. Otherwise the prompt (text and
-  images) goes back to the composer. Things the history cannot hold (`Note`s, failed tool calls)
-  live in `SessionMarks` and are lost on `set_history`.
+- **Ending a turn early (`ChatPanel::keep`, `kept_messages`)**: on Stop, an error or a new
+  `send`, the turn always goes into the history as it is (the prompt, reasoning, text, answered
+  tool calls); the history never rolls back and the prompt never goes back to the composer.
+  Only tool calls without a result are dropped, because providers reject them. A `Note` keyed by
+  the index of the turn's last message marks it in the chat. `run::sendable` leaves out of the
+  history sent to the agent the assistant messages with only reasoning (unsigned, so e.g.
+  Anthropic would get an empty message). Things the history cannot hold (`Note`s, failed tool
+  calls) live in `SessionMarks` and are lost on `set_history`.
 - **Runtime independence (`src/spawn.rs`)**: the `Spawn` trait takes a boxed future. It is
   implemented for `tokio::runtime::Handle` (feature `tokio`, default), for `SmolGlobal` and
   `Arc<smol::Executor>` (feature `smol`), and for any `Fn(Task)` closure. agentai's HTTP client

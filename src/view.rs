@@ -3,7 +3,7 @@
 use crate::context::split_context;
 use crate::icons;
 use crate::media::MediaCache;
-use crate::{Composer, InputSettings, Note, SessionMarks, Toolbar, Turn, TurnStatus};
+use crate::{Composer, InputSettings, Note, SessionMarks, Toolbar, Turn};
 use agentai::{Media, Message, Part, Prompt, Role, ToolCall, ToolResponse};
 use egui::{
     Align, Color32, CornerRadius, Frame, Layout, Margin, RichText, ScrollArea, TextEdit, TextStyle,
@@ -179,7 +179,6 @@ fn messages(
     });
     if let Some(turn) = turn {
         ui.push_id("turn", |ui| {
-            let running = turn.status == TurnStatus::Running;
             // The notes are for the history, not for the turn
             let no_notes = HashMap::new();
             show_messages(
@@ -188,17 +187,8 @@ fn messages(
                 &turn.messages,
                 &marks.failed_tools,
                 &no_notes,
-                running,
+                true,
             );
-            match &turn.status {
-                TurnStatus::Running => {}
-                TurnStatus::Cancelled => {
-                    ui.weak("Stopped. This exchange was not added to the history.");
-                }
-                TurnStatus::Failed(error) => {
-                    ui.colored_label(ui.visuals().error_fg_color, format!("Error: {error}"));
-                }
-            }
         });
     }
     ui.add_space(8.0);
@@ -276,19 +266,19 @@ fn show_messages(
     let last = groups.len().saturating_sub(1);
     for (i, group) in groups.iter().enumerate() {
         ui.add_space(GROUP_SPACING);
-        ui.push_id(i, |ui| match group.speaker {
-            Speaker::User => show_user(ui, cache, group),
-            Speaker::Agent => {
-                show_agent(ui, cache, group, failed_tools, running && i == last);
-                if let Some(note) = notes.get(&group.last) {
-                    show_note(ui, note);
-                }
+        ui.push_id(i, |ui| {
+            match group.speaker {
+                Speaker::User => show_user(ui, cache, group),
+                Speaker::Agent => show_agent(ui, cache, group, failed_tools, running && i == last),
+            }
+            if let Some(note) = notes.get(&group.last) {
+                show_note(ui, note);
             }
         });
     }
 }
 
-/// How a reply that is in the history ended early.
+/// How a turn that is in the history ended early.
 fn show_note(ui: &mut Ui, note: &Note) {
     match note {
         Note::Stopped => {

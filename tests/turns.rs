@@ -22,6 +22,8 @@ enum Reply {
         name: &'static str,
         arguments: &'static str,
     },
+    /// Streams these reasoning deltas, then stops at the token limit.
+    CutWhileThinking(&'static [&'static str]),
     /// Answers with an HTTP error.
     Error,
 }
@@ -58,9 +60,18 @@ fn fake_server(replies: Vec<Reply>) -> (String, Arc<Mutex<Vec<String>>>) {
                 let _ = stream.write_all(b"data: [DONE]\n\n");
                 continue;
             }
+            if let Reply::CutWhileThinking(deltas) = reply {
+                for delta in deltas {
+                    let delta = format!(r#"{{"reasoning_content":{delta:?}}}"#);
+                    let _ = stream.write_all(chunk(&delta, "null").as_bytes());
+                }
+                let _ = stream.write_all(chunk("{}", r#""length""#).as_bytes());
+                let _ = stream.write_all(b"data: [DONE]\n\n");
+                continue;
+            }
             let deltas = match reply {
                 Reply::StartAndHang(deltas) | Reply::Finish(deltas) => deltas,
-                Reply::ToolCall { .. } | Reply::Error => unreachable!(),
+                _ => unreachable!(),
             };
             for delta in deltas {
                 let _ = stream
@@ -158,7 +169,7 @@ fn a_stopped_reply_stays_and_goes_with_the_next_prompt() {
             .any(|p| matches!(p, Part::Text(t) if t == "one, two"))
     );
     let events = frames(&ctx, &mut chat, Duration::ZERO);
-    assert_eq!(events, [ChatEvent::TurnStopped { kept: true }]);
+    assert_eq!(events, [ChatEvent::TurnStopped]);
 
     chat.send(&ctx, "Where did you stop?");
     let events = frames(&ctx, &mut chat, Duration::from_secs(5));
@@ -172,18 +183,36 @@ fn a_stopped_reply_stays_and_goes_with_the_next_prompt() {
 }
 
 #[test]
-fn a_reply_stopped_before_it_started_goes_back_to_the_input() {
-    let (url, _) = fake_server(vec![Reply::StartAndHang(&[])]);
+fn a_reply_cut_while_thinking_stays() {
+    let (url, bodies) = fake_server(vec![
+        Reply::CutWhileThinking(&["Let me ", "think"]),
+        Reply::Finish(&["Done."]),
+    ]);
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let mut chat = chat(&url, &runtime);
     let ctx = egui::Context::default();
 
-    chat.send(&ctx, "Count to ten");
-    frames(&ctx, &mut chat, Duration::from_millis(500));
-    chat.cancel();
-    assert!(chat.history().is_empty());
-    let events = frames(&ctx, &mut chat, Duration::ZERO);
-    assert_eq!(events, [ChatEvent::TurnStopped { kept: false }]);
+    chat.send(&ctx, "Think hard");
+    let events = frames(&ctx, &mut chat, Duration::from_secs(5));
+    assert!(
+        matches!(
+            events.as_slice(),
+            [ChatEvent::TurnStarted, ChatEvent::TurnFailed { .. }]
+        ),
+        "{events:?}"
+    );
+    let history = chat.history();
+    assert_eq!(history.len(), 2, "the turn was not kept: {history:?}");
+    assert_eq!(history[0].role, Role::User);
+    assert_eq!(history[1].parts, [Part::Reasoning("Let me think".into())]);
+
+    chat.send(&ctx, "Go on");
+    let events = frames(&ctx, &mut chat, Duration::from_secs(5));
+    assert_eq!(events, [ChatEvent::TurnStarted, ChatEvent::TurnFinished]);
+    let second = &bodies.lock().unwrap()[1];
+    assert!(second.contains("Think hard"), "{second}");
+    // Providers refuse an assistant message with nothing but unsigned reasoning
+    assert!(!second.contains("Let me think"), "{second}");
 }
 
 #[test]
@@ -202,11 +231,17 @@ fn a_new_prompt_stops_the_running_turn() {
         events,
         [
             ChatEvent::TurnStarted,
-            ChatEvent::TurnStopped { kept: false },
+            ChatEvent::TurnStopped,
             ChatEvent::TurnStarted,
             ChatEvent::TurnFinished,
         ]
     );
+    let prompts: Vec<_> = chat
+        .history()
+        .iter()
+        .filter(|m| m.role == Role::User)
+        .collect();
+    assert_eq!(prompts.len(), 2, "the stopped prompt was not kept");
 }
 
 #[test]
@@ -219,14 +254,11 @@ fn a_failed_turn_is_reported() {
     chat.send(&ctx, "Hello?");
     let events = frames(&ctx, &mut chat, Duration::from_secs(5));
     assert!(!chat.is_running());
-    assert!(chat.history().is_empty());
+    assert_eq!(chat.history().len(), 1, "the prompt was not kept");
     assert!(
         matches!(
             events.as_slice(),
-            [
-                ChatEvent::TurnStarted,
-                ChatEvent::TurnFailed { kept: false, .. }
-            ]
+            [ChatEvent::TurnStarted, ChatEvent::TurnFailed { .. }]
         ),
         "{events:?}"
     );

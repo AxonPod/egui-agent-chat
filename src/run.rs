@@ -44,6 +44,7 @@ pub fn spawn(
     ctx: egui::Context,
 ) -> RunningTurn {
     let (tx, updates) = channel();
+    let history = sendable(history);
     let (task, abort) = abortable(async move {
         let send = |update: Update| {
             let _ = tx.send(update);
@@ -57,6 +58,22 @@ pub fn spawn(
         let _ = task.await;
     }));
     RunningTurn { updates, abort }
+}
+
+/// The history without the assistant messages a provider would refuse: those of a reply cut
+/// off while thinking hold only reasoning, which e.g. Anthropic does not take back without its
+/// signature, leaving an empty message.
+fn sendable(history: Vec<Message>) -> Vec<Message> {
+    history
+        .into_iter()
+        .filter(|message| {
+            message.role != Role::Assistant
+                || message
+                    .parts
+                    .iter()
+                    .any(|part| matches!(part, Part::Text(_) | Part::ToolCall(_) | Part::Media(_)))
+        })
+        .collect()
 }
 
 async fn run(

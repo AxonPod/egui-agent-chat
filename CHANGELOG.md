@@ -14,10 +14,17 @@
 
 - `ChatEvent`: what happened in the chat during the frame, in order. A turn started
   (`TurnStarted`), a tool was called or returned (`ToolCalled`, `ToolFinished`), and the turn
-  finished (`TurnFinished`), was stopped (`TurnStopped { kept }`) or failed
-  (`TurnFailed { error, kept }`). `kept` says whether the reply so far went into the history,
-  e.g. to know when to save it.
+  finished (`TurnFinished`), was stopped (`TurnStopped`) or failed (`TurnFailed { error }`).
+  After any of the last three the history has grown, a good moment to save it.
 - Images that tools return in their `ToolOutput` are shown below the call.
+
+### Changed
+
+- A turn that is stopped or fails stays in the history with everything the agent wrote so far,
+  including a reply cut off by the token limit while it was only thinking, or a prompt that
+  failed before any answer. The history never rolls back and the prompt no longer goes back to
+  the input; only tool calls without a result are dropped. Assistant messages with nothing but
+  reasoning are not sent back to the model, as providers refuse them.
 
 ### Fixed
 

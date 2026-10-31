@@ -31,16 +31,11 @@ pub enum ChatEvent {
     /// The agent answered; the turn is in the [`history`](crate::ChatPanel::history).
     TurnFinished,
     /// The turn was stopped: with Stop, [`cancel`](crate::ChatPanel::cancel), or by a new
-    /// [`send`](crate::ChatPanel::send).
-    TurnStopped {
-        /// Whether the reply so far went into the history. If not, the history is unchanged.
-        kept: bool,
-    },
-    /// The turn failed with `error`.
+    /// [`send`](crate::ChatPanel::send). The prompt and the reply so far are in the history.
+    TurnStopped,
+    /// The turn failed with `error`. The prompt and the reply so far are in the history.
     TurnFailed {
         /// What went wrong.
         error: String,
-        /// Whether the reply so far went into the history. If not, the history is unchanged.
-        kept: bool,
     },
 }

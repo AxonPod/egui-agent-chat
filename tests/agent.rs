@@ -117,7 +117,7 @@ fn tool_call_and_result_are_in_history() {
 
 #[test]
 #[ignore = "needs a model server"]
-fn cancelled_turn_is_not_added() {
+fn cancelled_turn_is_kept() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let mut chat = chat(&runtime);
     let ctx = egui::Context::default();
@@ -125,10 +125,12 @@ fn cancelled_turn_is_not_added() {
     frame(&ctx, &mut chat);
     chat.cancel();
     assert!(!chat.is_running());
+    let kept = chat.history().to_vec();
+    assert!(!kept.is_empty(), "the prompt was not kept");
     // The aborted task sends nothing more
     std::thread::sleep(Duration::from_secs(2));
     frame(&ctx, &mut chat);
-    assert!(chat.history().is_empty());
+    assert_eq!(chat.history(), kept);
 }
 
 /// smol alone, without a tokio runtime of our own: async-compat provides the reactor.

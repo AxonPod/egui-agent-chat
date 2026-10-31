@@ -60,8 +60,11 @@
 //!
 //! for event in chat.ui(ui) {
 //!     match event {
-//!         ChatEvent::TurnFinished | ChatEvent::TurnStopped { kept: true } => save(chat.history()),
-//!         ChatEvent::TurnFailed { error, .. } => eprintln!("the turn failed: {error}"),
+//!         ChatEvent::TurnFinished | ChatEvent::TurnStopped => save(chat.history()),
+//!         ChatEvent::TurnFailed { error } => {
+//!             eprintln!("the turn failed: {error}");
+//!             save(chat.history());
+//!         }
 //!         _ => {}
 //!     }
 //! }
@@ -80,11 +83,10 @@
 //! # History
 //!
 //! The conversation is a plain `Vec<agentai::Message>`. [`ChatPanel::history`] returns it,
-//! extended after every finished turn, so it can be saved; [`ChatPanel::set_history`]
-//! restores it. When a turn is stopped or fails after the agent started its reply, the
-//! exchange so far stays in the history, marked in the chat, and the conversation goes on from
-//! it. When nothing had been written yet, nothing is added, and the prompt goes back to the
-//! input.
+//! extended after every turn, so it can be saved; [`ChatPanel::set_history`] restores it. A
+//! turn that is stopped or fails stays in the history too, with everything the agent wrote so
+//! far, marked in the chat; the conversation goes on from it. Only tool calls left without a
+//! result are dropped, as providers refuse them.
 //!
 //! # Images
 //!
@@ -133,20 +135,11 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum TurnStatus {
-    Running,
-    Failed(String),
-    Cancelled,
-}
-
-/// A turn that is running, or that failed or was stopped before the agent replied, and so is
-/// not in the history.
+/// The running turn. It goes into the history when it ends.
 pub(crate) struct Turn {
     /// The prompt, then what the agent has done so far.
     pub(crate) messages: Vec<Message>,
-    pub(crate) status: TurnStatus,
-    running: Option<RunningTurn>,
+    running: RunningTurn,
 }
 
 /// The message being written: its text and attachments.
@@ -182,28 +175,9 @@ impl Composer {
         self.text.clear();
         Some(prompt)
     }
-
-    /// Puts back the prompt of a turn that did not finish, unless something new was written.
-    fn restore(&mut self, prompt: Option<&Message>) {
-        if !self.text.is_empty() || !self.attachments.is_empty() {
-            return;
-        }
-        for part in prompt.map(|m| m.parts.as_slice()).unwrap_or_default() {
-            match part {
-                Part::Text(text) => {
-                    if !self.text.is_empty() {
-                        self.text.push('\n');
-                    }
-                    self.text.push_str(text);
-                }
-                Part::Media(media) => self.attachments.push(media.clone()),
-                _ => {}
-            }
-        }
-    }
 }
 
-/// How a reply that is in the history ended early.
+/// How a turn that is in the history ended early.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Note {
     Stopped,
@@ -323,21 +297,17 @@ impl ChatPanel {
 
     /// Whether the agent is working on an answer.
     pub fn is_running(&self) -> bool {
-        self.turn
-            .as_ref()
-            .is_some_and(|t| t.status == TurnStatus::Running)
+        self.turn.is_some()
     }
 
-    /// Sends `prompt` to the agent with the current history, replacing a running turn. The
-    /// input calls it when the user sends a message.
+    /// Sends `prompt` to the agent with the current history. A running turn is stopped first,
+    /// as with [`cancel`](Self::cancel). The input calls it when the user sends a message.
     ///
     /// `prompt` is anything agentai accepts: text, or an [`agentai::Prompt`] with images, e.g.
     /// `Prompt::text("What is in it?").with_image_bytes("image/png", &png)`. The chat does
     /// not check those images against [`set_capabilities`](Self::set_capabilities).
     pub fn send(&mut self, ctx: &egui::Context, prompt: impl IntoPrompt) {
-        if self.is_running() {
-            self.events.push(ChatEvent::TurnStopped { kept: false });
-        }
+        self.cancel();
         let prompt = prompt.into_prompt();
         let shown = Message::new(Role::User, prompt.parts().to_vec());
         let running = run::spawn(
@@ -347,52 +317,27 @@ impl ChatPanel {
             prompt,
             ctx.clone(),
         );
-        // Dropping a previous turn stops it
         self.turn = Some(Turn {
             messages: vec![shown],
-            status: TurnStatus::Running,
-            running: Some(running),
+            running,
         });
         self.events.push(ChatEvent::TurnStarted);
     }
 
-    /// Stops the running turn. If the agent has already started its reply (text or a tool
-    /// call), the exchange stays in the history, marked as stopped, and the conversation goes
-    /// on from it. Otherwise the prompt and its images go back to the input, if the input is
-    /// empty.
+    /// Stops the running turn. The prompt and what the agent wrote so far stay in the history,
+    /// marked as stopped, and the conversation goes on from them.
     pub fn cancel(&mut self) {
-        if self.is_running() {
-            self.end_early(Note::Stopped);
+        if let Some(turn) = self.turn.take() {
+            self.keep(turn, Note::Stopped);
+            self.events.push(ChatEvent::TurnStopped);
         }
     }
 
-    /// Ends the running turn before the agent finished it, see [`cancel`](Self::cancel).
-    fn end_early(&mut self, note: Note) {
-        let Some(mut turn) = self.turn.take() else {
-            return;
-        };
-        // Dropping it stops the task
-        turn.running = None;
-        let started = started_reply(&turn.messages);
-        let kept = started.is_some();
-        self.events.push(match &note {
-            Note::Stopped => ChatEvent::TurnStopped { kept },
-            Note::Failed(error) => ChatEvent::TurnFailed {
-                error: error.clone(),
-                kept,
-            },
-        });
-        if let Some(messages) = started {
-            self.history.extend(messages);
-            self.marks.notes.insert(self.history.len() - 1, note);
-        } else {
-            self.composer.restore(turn.messages.first());
-            turn.status = match note {
-                Note::Stopped => TurnStatus::Cancelled,
-                Note::Failed(error) => TurnStatus::Failed(error),
-            };
-            self.turn = Some(turn);
-        }
+    /// Adds a turn that ended early to the history, marked with `note`. Dropping the turn stops
+    /// its task.
+    fn keep(&mut self, turn: Turn, note: Note) {
+        self.history.extend(kept_messages(&turn.messages));
+        self.marks.notes.insert(self.history.len() - 1, note);
     }
 
     /// Shows the chat in all of `ui`. Call it every frame: it also takes in what the agent
@@ -455,10 +400,7 @@ impl ChatPanel {
         let Some(turn) = &mut self.turn else {
             return;
         };
-        let Some(running) = &turn.running else {
-            return;
-        };
-        let updates: Vec<Update> = running.updates.try_iter().collect();
+        let updates: Vec<Update> = turn.running.updates.try_iter().collect();
         for update in updates {
             match update {
                 Update::Text(delta) => match reply(&mut turn.messages).parts.last_mut() {
@@ -505,7 +447,10 @@ impl ChatPanel {
                     return;
                 }
                 Update::Failed(error) => {
-                    self.end_early(Note::Failed(error));
+                    if let Some(turn) = self.turn.take() {
+                        self.keep(turn, Note::Failed(error.clone()));
+                    }
+                    self.events.push(ChatEvent::TurnFailed { error });
                     return;
                 }
             }
@@ -513,10 +458,9 @@ impl ChatPanel {
     }
 }
 
-/// The part of an unfinished turn worth keeping: the prompt and the reply so far, if the
-/// agent has written text or called a tool. Tool calls without a result are left out, as
-/// providers refuse a history with them; so is reasoning that led to nothing.
-fn started_reply(messages: &[Message]) -> Option<Vec<Message>> {
+/// The messages of a turn that ended early, without the tool calls that got no result, as
+/// providers refuse a history with them.
+fn kept_messages(messages: &[Message]) -> Vec<Message> {
     let answered: HashSet<&str> = messages
         .iter()
         .flat_map(|m| &m.parts)
@@ -525,28 +469,17 @@ fn started_reply(messages: &[Message]) -> Option<Vec<Message>> {
             _ => None,
         })
         .collect();
-    let mut kept = Vec::new();
-    let mut replied = false;
-    for message in messages {
-        let mut message = message.clone();
-        if message.role == Role::Assistant {
+    messages
+        .iter()
+        .filter_map(|message| {
+            let mut message = message.clone();
             message.parts.retain(|part| match part {
                 Part::ToolCall(call) => answered.contains(call.id.as_str()),
                 _ => true,
             });
-            let has_reply = message.parts.iter().any(|part| match part {
-                Part::Text(text) => !text.trim().is_empty(),
-                Part::ToolCall(_) => true,
-                _ => false,
-            });
-            if !has_reply {
-                continue;
-            }
-            replied = true;
-        }
-        kept.push(message);
-    }
-    replied.then_some(kept)
+            (message.role != Role::Assistant || !message.parts.is_empty()).then_some(message)
+        })
+        .collect()
 }
 
 /// The assistant message the streamed answer goes into, started after the prompt or a tool
@@ -569,23 +502,12 @@ mod tests {
     }
 
     #[test]
-    fn nothing_or_only_reasoning_is_not_a_reply() {
+    fn the_prompt_alone_and_reasoning_are_kept() {
         let prompt = Message::user("hi");
-        assert_eq!(started_reply(std::slice::from_ref(&prompt)), None);
-        let thinking = assistant(vec![Part::Reasoning("hmm".into())]);
-        assert_eq!(started_reply(&[prompt, thinking]), None);
-    }
-
-    #[test]
-    fn started_text_is_kept() {
-        let messages = vec![
-            Message::user("count"),
-            assistant(vec![
-                Part::Reasoning("ok".into()),
-                Part::Text("1, 2".into()),
-            ]),
-        ];
-        assert_eq!(started_reply(&messages), Some(messages));
+        let alone = std::slice::from_ref(&prompt);
+        assert_eq!(kept_messages(alone), alone);
+        let messages = vec![prompt, assistant(vec![Part::Reasoning("hmm".into())])];
+        assert_eq!(kept_messages(&messages), messages);
     }
 
     #[test]
@@ -598,7 +520,6 @@ mod tests {
             Message::tool_response(ToolResponse::new(&done, "3")),
             assistant(vec![Part::ToolCall(pending)]),
         ];
-        let kept = started_reply(&messages).unwrap();
-        assert_eq!(kept, messages[..3]);
+        assert_eq!(kept_messages(&messages), messages[..3]);
     }
 }

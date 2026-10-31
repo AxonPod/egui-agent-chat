@@ -58,8 +58,8 @@ For AI coding agents, [`llms.txt`](https://github.com/AxonPod/egui-agent-chat/bl
 ## Reacting to what happens in the chat
 
 `ui` returns the `ChatEvent`s of the frame, in order: `TurnStarted`, `ToolCalled`,
-`ToolFinished`, then `TurnFinished`, `TurnStopped { kept }` or `TurnFailed { error, kept }`.
-`kept` says whether the reply so far went into the history.
+`ToolFinished`, then `TurnFinished`, `TurnStopped` or `TurnFailed { error }`. A stopped or
+failed turn stays in the history with what the agent wrote so far.
 
 ```rust
 use egui_agent_chat::ChatEvent;
@@ -67,8 +67,11 @@ use egui_agent_chat::ChatEvent;
 for event in chat.ui(ui) {
     match event {
         // The history has grown: a good moment to save it
-        ChatEvent::TurnFinished | ChatEvent::TurnStopped { kept: true } => save(chat.history()),
-        ChatEvent::TurnFailed { error, .. } => eprintln!("the turn failed: {error}"),
+        ChatEvent::TurnFinished | ChatEvent::TurnStopped => save(chat.history()),
+        ChatEvent::TurnFailed { error } => {
+            eprintln!("the turn failed: {error}");
+            save(chat.history());
+        }
         _ => {}
     }
 }
