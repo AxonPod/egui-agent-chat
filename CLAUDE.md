@@ -103,8 +103,10 @@ Releases: bump `version` in `Cargo.toml`, add its section to `CHANGELOG.md` and 
 - `agentai` is not re-exported: users depend on it themselves, from the same minor line
   (currently 0.5). When agentai changes, follow its `MIGRATION.md`, which is in the GitHub repo
   `AdamStrojek/rust-agentai`, not in the published crate.
-- Until agentai 0.5 is released, `Cargo.toml` takes it from the local checkout
-  `../rust-agentai` and patches genai to `../rust-genai`. CI cannot build that; switch both to
-  crates.io versions before pushing.
+- Until agentai 0.5 is released, `Cargo.toml` takes it from GitHub (`AdamStrojek/rust-agentai`,
+  its `feat/image-generation` branch) and patches genai to `AdamStrojek/rust-genai`, both pinned
+  to a commit, so CI and the apps that use the crate from git can build it. To work against local
+  checkouts, patch them in a local `.cargo/config.toml`, not in `Cargo.toml`. Switch both to
+  crates.io versions once they are released.
 - Keep the public API small: prefer a setter on `ChatPanel`, or a new `ChatEvent` variant, over
   new callback mechanisms. Every public item needs docs (`#![warn(missing_docs)]`).
