@@ -135,7 +135,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 [[package]]
 name = "agentai"
 version = "0.4.0"
-source = "git+https://github.com/AdamStrojek/rust-agentai?rev=1860d357ad5163fd17542f473b7217239beb3244#1860d357ad5163fd17542f473b7217239beb3244"
+source = "git+https://github.com/AdamStrojek/rust-agentai?rev=01848fe0de925aa163765c83c85a186e9743703e#01848fe0de925aa163765c83c85a186e9743703e"
 dependencies = [
  "agentai-core",
  "agentai-macros",
@@ -158,7 +158,7 @@ dependencies = [
 [[package]]
 name = "agentai-core"
 version = "0.4.0"
-source = "git+https://github.com/AdamStrojek/rust-agentai?rev=1860d357ad5163fd17542f473b7217239beb3244#1860d357ad5163fd17542f473b7217239beb3244"
+source = "git+https://github.com/AdamStrojek/rust-agentai?rev=01848fe0de925aa163765c83c85a186e9743703e#01848fe0de925aa163765c83c85a186e9743703e"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -173,7 +173,7 @@ dependencies = [
 [[package]]
 name = "agentai-macros"
 version = "0.4.0"
-source = "git+https://github.com/AdamStrojek/rust-agentai?rev=1860d357ad5163fd17542f473b7217239beb3244#1860d357ad5163fd17542f473b7217239beb3244"
+source = "git+https://github.com/AdamStrojek/rust-agentai?rev=01848fe0de925aa163765c83c85a186e9743703e#01848fe0de925aa163765c83c85a186e9743703e"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
