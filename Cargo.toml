@@ -21,7 +21,7 @@ smol = ["dep:smol", "dep:async-compat"]
 
 [dependencies]
 # agentai 0.5 is not released yet: its `feat/image-generation` branch, with the genai it needs (see the patch)
-agentai = { git = "https://github.com/AdamStrojek/rust-agentai", rev = "484eaa2f64aa00e015f7cd4001559cb4909735df", default-features = false }
+agentai = { git = "https://github.com/AdamStrojek/rust-agentai", rev = "1860d357ad5163fd17542f473b7217239beb3244", default-features = false }
 async-compat = { version = "0.2.6", optional = true }
 base64 = "0.23.1"
 egui = "0.37"
@@ -34,10 +34,13 @@ smol = { version = "2", optional = true }
 tokio = { version = "1", features = ["rt"], optional = true }
 
 [dev-dependencies]
-# The tests' #[toolbox] and the example's date and time tool
-agentai = { git = "https://github.com/AdamStrojek/rust-agentai", rev = "484eaa2f64aa00e015f7cd4001559cb4909735df", default-features = false, features = [
+# The tests' #[toolbox], the example's date and time tool, and TLS for the example and the
+# live tests (the library leaves the TLS backend to the app)
+agentai = { git = "https://github.com/AdamStrojek/rust-agentai", rev = "1860d357ad5163fd17542f473b7217239beb3244", default-features = false, features = [
     "macros",
     "tools-buildin",
+    "rustls-ring",
+    "system-proxy",
 ] }
 anyhow = "1.0.104"
 async-trait = "0.1.92"

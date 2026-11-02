@@ -10,6 +10,9 @@ Key facts for integrating:
 
 - `agentai` is not re-exported. Add it as your own dependency, from the `0.5` line this crate
   uses (0.5.0 or newer), so that both share one `Agent` type.
+- This crate builds agentai without its default features; the TLS backend comes from your
+  `agentai` dependency. Its defaults include `rustls-ring`. With `default-features = false`,
+  turn on `rustls-ring`, `rustls-aws-lc` or `native-tls`, or HTTPS requests fail.
 - The widget fills the `egui::Ui` it gets, including its own 12 px margins and an input panel
   at the bottom. To share the screen, put it in a side panel or a window.
 - `ChatPanel::ui` returns the `ChatEvent`s of the frame: a turn started, finished, was stopped

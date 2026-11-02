@@ -25,6 +25,10 @@ egui-agent-chat = "0.2"
 ```
 
 The agent comes from your own `agentai` dependency; use 0.5, the version this crate uses.
+The chat builds agentai without its default features, so the TLS backend is yours to choose:
+agentai's defaults give you rustls with ring, and with `default-features = false` you need to
+turn on one of its TLS features (`rustls-ring`, `rustls-aws-lc` or `native-tls`), or HTTPS
+requests fail.
 
 ```rust
 use agentai::Agent;

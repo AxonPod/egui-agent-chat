@@ -90,7 +90,8 @@ Releases: bump `version` in `Cargo.toml`, add its section to `CHANGELOG.md` and 
   explicit `widget_info` label (e.g. "Remove").
 - `tests/turns.rs` runs a fake OpenAI-compatible SSE server (`tests/common/mod.rs` builds the
   agent with `Agent::from_client`). It streams text, calls a tool, or answers with an HTTP
-  error, one `Reply` per request in order. Use it for deterministic tests of streaming, tools,
+  error, one `Reply` per request in order. It builds the `genai::Client` by hand, so it calls
+  `agentai::tls::install_crypto_provider()` first (agentai's `rustls-ring` panics otherwise). Use it for deterministic tests of streaming, tools,
   events and ending a turn early.
 - `tests/agent.rs` is `#[ignore]`d and talks to a real model (text, tools, images, smol).
 - kittest panics on glyphs no installed font has, e.g. egui's ⚠ shown for an image that failed
@@ -100,6 +101,9 @@ Releases: bump `version` in `Cargo.toml`, add its section to `CHANGELOG.md` and 
 
 ## Conventions
 
+- The library takes agentai with `default-features = false`, so it picks no TLS backend: the
+  app's own `agentai` dependency does. The dev-dependencies turn on `rustls-ring` (and
+  `macros`, `tools-buildin`, `system-proxy`) for the tests and the example.
 - `agentai` is not re-exported: users depend on it themselves, from the same minor line
   (currently 0.5). When agentai changes, follow its `MIGRATION.md`, which is in the GitHub repo
   `AdamStrojek/rust-agentai`, not in the published crate.

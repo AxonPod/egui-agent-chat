@@ -20,9 +20,10 @@
 
 ### Changed
 
-- agentai is built without its default features (MCP client, macros, tools), so the chat
+- agentai is built without its default features (TLS, MCP client, macros, tools), so the chat
   adds none of their dependencies to your app. Enable the ones you use in your own `agentai`
-  dependency.
+  dependency; its defaults include TLS (`rustls-ring`). With `default-features = false`, turn
+  on one of its TLS features, or HTTPS requests fail.
 - A turn that is stopped or fails stays in the history with everything the agent wrote so far,
   including a reply cut off by the token limit while it was only thinking, or a prompt that
   failed before any answer. The history never rolls back and the prompt no longer goes back to

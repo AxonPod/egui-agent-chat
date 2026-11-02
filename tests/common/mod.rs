@@ -7,6 +7,8 @@ use agentai::genai::resolver::{AuthData, Endpoint};
 
 /// An agent that talks to the OpenAI-compatible server at `base_url`, e.g. a fake one.
 pub fn local_agent(base_url: &str) -> Agent {
+    // A client built by hand needs the rustls provider, which agentai installs only for its own
+    agentai::tls::install_crypto_provider();
     let client = Client::builder()
         .with_adapter_kind(AdapterKind::OpenAI)
         .append_provider_config(
