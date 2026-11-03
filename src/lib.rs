@@ -101,6 +101,35 @@
 //! Drawing images needs image loaders installed in your app, for example with
 //! `egui_extras::install_image_loaders`.
 //!
+//! # Questions
+//!
+//! The agent can ask the user to choose: [`ChatPanel::ask`] shows a [`Question`] as a form with
+//! its [`Choice`]s (text or images), one or several, optionally with an "Other" text field and
+//! Skip. The answer comes back as [`ChatEvent::QuestionAnswered`]. The chat does not answer the
+//! agent itself: a tool of yours asks, with the [`ToolCall::id`](agentai::ToolCall::id) of its
+//! call as the question's id so the form is shown under that call, waits for the answer your
+//! app passes back, and returns what the agent should know.
+//!
+//! ```no_run
+//! # fn show(chat: &mut egui_agent_chat::ChatPanel, ui: &mut egui::Ui, call: &agentai::ToolCall) {
+//! use egui_agent_chat::{Answer, ChatEvent, Choice, Question, QuestionLayout};
+//!
+//! chat.set_question_layout(QuestionLayout::Horizontal);
+//! chat.ask(
+//!     Question::new(call.id.clone(), "Which format?", vec![
+//!         Choice::text("png", "PNG"),
+//!         Choice::text("jpeg", "JPEG"),
+//!     ])
+//!     .with_other("Another format"),
+//! );
+//! for event in chat.ui(ui) {
+//!     if let ChatEvent::QuestionAnswered { id, answer: Answer::Chosen { choices, other } } = event {
+//!         // Send `choices` and `other` to the tool waiting for `id`
+//!     }
+//! }
+//! # }
+//! ```
+//!
 //! # Context blocks
 //!
 //! A prompt may carry long material, such as a document, wrapped with [`context_block`]. The
@@ -113,6 +142,7 @@ mod context;
 mod event;
 pub mod icons;
 mod media;
+mod question;
 mod run;
 mod shortcut;
 mod spawn;
@@ -122,6 +152,7 @@ mod view;
 pub use capabilities::ModelCapabilities;
 pub use context::{ContextBlock, context_block, split_context};
 pub use event::ChatEvent;
+pub use question::{Answer, Choice, Question, QuestionLayout};
 pub use shortcut::SendShortcut;
 #[cfg(feature = "smol")]
 pub use spawn::SmolGlobal;
@@ -191,6 +222,8 @@ pub(crate) struct SessionMarks {
     pub(crate) failed_tools: HashSet<String>,
     /// Replies that ended early, by the index of their last message in the history.
     pub(crate) notes: HashMap<usize, Note>,
+    /// Answered questions, by their id.
+    pub(crate) answers: HashMap<String, (Question, Answer)>,
 }
 
 /// How the input behaves.
@@ -199,6 +232,7 @@ pub(crate) struct InputSettings {
     pub(crate) send_shortcut: SendShortcut,
     pub(crate) toolbar: bool,
     pub(crate) capabilities: ModelCapabilities,
+    pub(crate) question_layout: QuestionLayout,
 }
 
 /// A chat with an agentai [`Agent`]. See the [crate docs](crate) for an example.
@@ -209,6 +243,8 @@ pub struct ChatPanel {
     turn: Option<Turn>,
     marks: SessionMarks,
     composer: Composer,
+    /// Questions waiting for the user's answer.
+    questions: Vec<question::Pending>,
     settings: InputSettings,
     cache: view::Caches,
     /// Base of the ids of the chat's widgets, so that two chats in one frame don't share state.
@@ -229,10 +265,12 @@ impl ChatPanel {
             turn: None,
             marks: SessionMarks::default(),
             composer: Composer::default(),
+            questions: Vec::new(),
             settings: InputSettings {
                 send_shortcut: SendShortcut::default(),
                 toolbar: true,
                 capabilities: ModelCapabilities::default(),
+                question_layout: QuestionLayout::default(),
             },
             cache: view::Caches::default(),
             id: {
@@ -275,16 +313,44 @@ impl ChatPanel {
         self.composer.attach(self.settings.capabilities, media)
     }
 
+    /// Lays out the choices of questions as `layout`, unless a question has its own
+    /// [`layout`](Question::layout); the default is [`QuestionLayout::Vertical`].
+    pub fn set_question_layout(&mut self, layout: QuestionLayout) {
+        self.settings.question_layout = layout;
+    }
+
+    /// Shows `question` in the chat as a form and waits for the user's answer, which comes as
+    /// [`ChatEvent::QuestionAnswered`]. A question with the id of a tool call is shown under
+    /// that call, others at the end of the chat. Asking again with the same id replaces the
+    /// question.
+    ///
+    /// A question asked by a tool call of the running turn goes away when the turn ends
+    /// without an answer, as its tool is stopped. Others wait until they are answered or
+    /// [dismissed](Self::dismiss_question). Answered questions stay in the chat with their
+    /// answer under their tool call, until [`set_history`](Self::set_history).
+    pub fn ask(&mut self, question: Question) {
+        self.marks.answers.remove(&question.id);
+        self.questions.retain(|p| p.question.id != question.id);
+        self.questions.push(question::Pending::new(question));
+    }
+
+    /// Removes the form of the question `id` if it is still waiting for an answer, e.g. when
+    /// your tool gave up waiting. It sends no event.
+    pub fn dismiss_question(&mut self, id: &str) {
+        self.questions.retain(|p| p.question.id != id);
+    }
+
     /// The conversation: every finished turn, including the user's prompts.
     pub fn history(&self) -> &[Message] {
         &self.history
     }
 
-    /// Replaces the conversation, stopping a running turn and clearing the input and its
-    /// attachments. An empty history starts a new chat. The stopped turn sends no
+    /// Replaces the conversation, stopping a running turn and clearing the input, its
+    /// attachments and the questions. An empty history starts a new chat. The stopped turn sends no
     /// [`ChatEvent`].
     pub fn set_history(&mut self, history: Vec<Message>) {
         self.turn = None;
+        self.questions.clear();
         self.marks = SessionMarks::default();
         self.composer = Composer::default();
         self.history = history;
@@ -336,8 +402,24 @@ impl ChatPanel {
     /// Adds a turn that ended early to the history, marked with `note`. Dropping the turn stops
     /// its task.
     fn keep(&mut self, turn: Turn, note: Note) {
+        self.drop_questions(&turn.messages);
         self.history.extend(kept_messages(&turn.messages));
         self.marks.notes.insert(self.history.len() - 1, note);
+    }
+
+    /// Removes the questions that tool calls in `messages` asked and that are still waiting:
+    /// the turn ended, so their tools no longer wait for an answer.
+    fn drop_questions(&mut self, messages: &[Message]) {
+        let calls: HashSet<&str> = messages
+            .iter()
+            .flat_map(|m| &m.parts)
+            .filter_map(|part| match part {
+                Part::ToolCall(call) => Some(call.id.as_str()),
+                _ => None,
+            })
+            .collect();
+        self.questions
+            .retain(|p| !calls.contains(p.question.id.as_str()));
     }
 
     /// Shows the chat in all of `ui`. Call it every frame: it also takes in what the agent
@@ -373,6 +455,11 @@ impl ChatPanel {
             Some(view::InputAction::Stop) => self.cancel(),
             None => {}
         }
+        let mut forms = question::Forms::new(
+            &mut self.questions,
+            &self.marks.answers,
+            self.settings.question_layout,
+        );
         view::conversation(
             ui,
             self.id,
@@ -380,7 +467,17 @@ impl ChatPanel {
             &self.history,
             self.turn.as_ref(),
             &self.marks,
+            &mut forms,
         );
+        for (id, answer) in std::mem::take(&mut forms.answered) {
+            if let Some(i) = self.questions.iter().position(|p| p.question.id == id) {
+                let question = self.questions.remove(i).question;
+                self.marks
+                    .answers
+                    .insert(id.clone(), (question, answer.clone()));
+            }
+            self.events.push(ChatEvent::QuestionAnswered { id, answer });
+        }
         std::mem::take(&mut self.events)
     }
 
@@ -442,7 +539,9 @@ impl ChatPanel {
                 }
                 Update::Finished(messages) => {
                     self.history.extend(messages);
-                    self.turn = None;
+                    if let Some(turn) = self.turn.take() {
+                        self.drop_questions(&turn.messages);
+                    }
                     self.events.push(ChatEvent::TurnFinished);
                     return;
                 }

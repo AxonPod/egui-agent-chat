@@ -3,11 +3,15 @@
 mod common;
 
 use agentai::tool::{Tool, ToolBox, ToolError, ToolOutput, ToolResult, toolbox};
-use agentai::{Media, Part, Role};
-use egui_agent_chat::{ChatEvent, ChatPanel};
+use agentai::{Media, Part, Role, ToolCall};
+use egui_agent_chat::{Answer, ChatEvent, ChatPanel, Choice, Question};
+use egui_kittest::Harness;
+use egui_kittest::kittest::Queryable;
+use futures_channel::oneshot;
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 /// What the fake server does with a request.
@@ -335,4 +339,147 @@ fn tool_calls_are_reported_and_their_images_kept() {
             .iter()
             .any(|part| matches!(part, Part::Media(media) if media.is_image()))
     );
+}
+
+type Asked = (Question, oneshot::Sender<Answer>);
+
+/// The intermediary's side of a tool that asks the user: it sends the question to the app and
+/// waits for the answer.
+struct Asker(mpsc::Sender<Asked>);
+
+#[toolbox]
+impl Asker {
+    /// Asks the user to choose a color.
+    #[tool]
+    async fn ask(
+        &self,
+        call: &ToolCall,
+        /// The question
+        question: String,
+    ) -> ToolResult {
+        let choices = vec![Choice::text("red", "Red"), Choice::text("blue", "Blue")];
+        let (answer, answered) = oneshot::channel();
+        self.0
+            .send((Question::new(call.id.clone(), question, choices), answer))
+            .map_err(|e| ToolError::Failed(e.to_string()))?;
+        match answered.await {
+            Ok(Answer::Chosen { choices, .. }) => Ok(format!("chosen: {}", choices.join(", "))),
+            Ok(_) => Ok("declined".into()),
+            Err(_) => Err(ToolError::Failed("no answer".into())),
+        }
+    }
+}
+
+/// The app's side: puts the questions into the chat and sends the answers back.
+struct AskingApp {
+    chat: ChatPanel,
+    asked: mpsc::Receiver<Asked>,
+    waiting: HashMap<String, oneshot::Sender<Answer>>,
+    events: Vec<ChatEvent>,
+}
+
+fn asking_app(
+    replies: Vec<Reply>,
+    runtime: &tokio::runtime::Runtime,
+) -> Harness<'static, AskingApp> {
+    let (url, _) = fake_server(replies);
+    let (questions, asked) = mpsc::channel();
+    let agent = common::local_agent(&url).with_toolbox(Asker(questions));
+    let app = AskingApp {
+        chat: ChatPanel::new(runtime.handle().clone(), agent),
+        asked,
+        waiting: HashMap::new(),
+        events: Vec::new(),
+    };
+    Harness::builder()
+        .with_size(egui::vec2(400.0, 600.0))
+        .build_ui_state(
+            |ui, app: &mut AskingApp| {
+                for (question, answer) in app.asked.try_iter() {
+                    app.waiting.insert(question.id.clone(), answer);
+                    app.chat.ask(question);
+                }
+                for event in app.chat.ui(ui) {
+                    if let ChatEvent::QuestionAnswered { id, answer } = &event
+                        && let Some(waiting) = app.waiting.remove(id)
+                    {
+                        let _ = waiting.send(answer.clone());
+                    }
+                    app.events.push(event);
+                }
+            },
+            app,
+        )
+}
+
+/// Steps the harness until `done`, at most for 5 seconds.
+fn step_until(
+    harness: &mut Harness<'_, AskingApp>,
+    done: impl Fn(&Harness<'_, AskingApp>) -> bool,
+) {
+    let start = Instant::now();
+    while !done(harness) {
+        assert!(start.elapsed() < Duration::from_secs(5), "timed out");
+        harness.step();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+const ASK: Reply = Reply::ToolCall {
+    name: "ask",
+    arguments: r#"{"question":"Which color?"}"#,
+};
+
+#[test]
+fn a_tool_gets_the_users_answer() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let mut harness = asking_app(vec![ASK, Reply::Finish(&["Blue it is."])], &runtime);
+    let ctx = harness.ctx.clone();
+    harness.state_mut().chat.send(&ctx, "Pick a color");
+    step_until(&mut harness, |h| h.query_by_label("Blue").is_some());
+
+    harness.get_by_label("Blue").click();
+    harness.step();
+    harness.get_by_label("Submit").click();
+    step_until(&mut harness, |h| !h.state().chat.is_running());
+
+    let app = harness.state();
+    assert!(
+        app.events.contains(&ChatEvent::TurnFinished),
+        "{:?}",
+        app.events
+    );
+    let response = app
+        .chat
+        .history()
+        .iter()
+        .flat_map(|m| &m.parts)
+        .find_map(|part| match part {
+            Part::ToolResponse(response) => Some(response),
+            _ => None,
+        })
+        .expect("no tool result in the history");
+    assert_eq!(response.text().as_deref(), Some("chosen: blue"));
+    // The answer stays under the call
+    harness.run();
+    assert!(harness.query_by_label("Submit").is_none());
+    let chosen = format!("{} Blue", egui_agent_chat::icons::CHECK);
+    assert!(harness.query_by_label(&chosen).is_some());
+}
+
+#[test]
+fn stopping_the_turn_removes_its_question() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let mut harness = asking_app(vec![ASK], &runtime);
+    let ctx = harness.ctx.clone();
+    harness.state_mut().chat.send(&ctx, "Pick a color");
+    step_until(&mut harness, |h| h.query_by_label("Submit").is_some());
+
+    harness.get_by_label_contains("Stop").click();
+    harness.run();
+    assert!(
+        harness.query_by_label("Submit").is_none(),
+        "the form stayed"
+    );
+    assert!(harness.state().events.contains(&ChatEvent::TurnStopped));
 }

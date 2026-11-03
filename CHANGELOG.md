@@ -17,6 +17,14 @@
   finished (`TurnFinished`), was stopped (`TurnStopped`) or failed (`TurnFailed { error }`).
   After any of the last three the history has grown, a good moment to save it.
 - Images that tools return in their `ToolOutput` are shown below the call.
+- Questions to the user: `ChatPanel::ask(Question)` shows a form in the chat with the agent's
+  choices, text (`Choice::text`) or pictures (`Choice::image`), one (radio buttons) or several
+  (checkboxes, `with_multiple`), an optional "Other" choice with a text field (`with_other`)
+  and Skip (`with_declinable`). The answer comes as `ChatEvent::QuestionAnswered { id, answer }`.
+  A question with a tool call's id is drawn under that call and keeps its answer there.
+  `set_question_layout` and `Question::with_layout` lay the choices out vertically or
+  horizontally; `dismiss_question` removes a waiting one. The tool that asks and answers the
+  agent is yours, see `examples/chat/ask.rs`.
 
 ### Changed
 

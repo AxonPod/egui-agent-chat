@@ -14,7 +14,10 @@ agents. Drop it into your app, give it your `Agent`, and get:
 - an input where Enter sends and Shift+Enter adds a line (or another shortcut you choose), and
   Stop interrupts the answer,
 - the conversation as a plain `Vec<agentai::Message>`, easy to save and restore,
-- events for your app: a turn started, finished, was stopped or failed, a tool was called.
+- questions from the agent: a form in the chat with options (text or images) to pick, one or
+  several, an "Other" field for the user's own answer, and Skip,
+- events for your app: a turn started, finished, was stopped or failed, a tool was called, a
+  question was answered.
 
 ## Quick start
 
@@ -63,7 +66,8 @@ For AI coding agents, [`llms.txt`](https://github.com/AxonPod/egui-agent-chat/bl
 
 `ui` returns the `ChatEvent`s of the frame, in order: `TurnStarted`, `ToolCalled`,
 `ToolFinished`, then `TurnFinished`, `TurnStopped` or `TurnFailed { error }`. A stopped or
-failed turn stays in the history with what the agent wrote so far.
+failed turn stays in the history with what the agent wrote so far. `QuestionAnswered` brings
+the user's answer to a question you asked, see below.
 
 ```rust
 use egui_agent_chat::ChatEvent;
@@ -153,6 +157,38 @@ chat.set_toolbar(false);
 Messages are then sent with the shortcut only, and an answer can be stopped only with
 `chat.cancel()`, so give users another way to stop it, e.g. a menu item.
 
+### How to let the agent ask the user
+
+`chat.ask(question)` shows a form in the chat: the question, its choices as radio buttons (or
+checkboxes with `with_multiple(true)`), optionally an "Other" choice with a text field, and
+Submit and Skip. A choice is text (`Choice::text`) or a picture (`Choice::image`, needs image
+loaders). The answer comes back as `ChatEvent::QuestionAnswered { id, answer }`, with the ids
+of the chosen choices and the Other text, or `Answer::Declined`.
+
+```rust
+use egui_agent_chat::{Choice, Question, QuestionLayout};
+
+chat.set_question_layout(QuestionLayout::Horizontal); // the default for all questions
+chat.ask(
+    Question::new(call.id.clone(), "Which format?", vec![
+        Choice::text("png", "PNG"),
+        Choice::text("jpeg", "JPEG"),
+    ])
+    .with_other("Another format")
+    .with_layout(QuestionLayout::Vertical), // just for this one
+);
+```
+
+The chat only shows the question and reports the answer; what the agent gets back is up to
+you. Usually a tool of yours asks: it gets the `ToolCall` (with `id`) in agentai's
+`call_tool`, sends the `Question` with that id to your app (e.g. over a channel), and awaits
+the answer. Your app calls `chat.ask` and, on `QuestionAnswered`, sends the answer back to the
+tool, which turns it into the tool's result. With the call's id, the form is drawn under that
+call and, once answered, shows the answer there; a question with another id goes at the end of
+the chat. A question of a tool call goes away when its turn ends without an answer, e.g. on
+Stop; `dismiss_question(id)` removes one yourself. `examples/chat/ask.rs` is a complete
+`ask_user` tool.
+
 ## Async runtime
 
 Turns of the agent run as background tasks started through the `Spawn` trait:
@@ -176,6 +212,7 @@ or a `.env` file:
 AGENTAI_MODEL=gpt-4.1-mini   # agentai picks the provider from the name
 OPENAI_API_KEY=...           # whatever that provider needs
 AGENTAI_IMAGES=0             # optional: for a model that cannot read images
+AGENTAI_QUESTIONS=horizontal # optional: the ask_user tool's options side by side
 ```
 
 ```sh
@@ -183,7 +220,8 @@ cargo run --example chat
 ```
 
 Variables already set in your shell win over `.env`. The menu also switches the send
-shortcut, the toolbar and image support.
+shortcut, the toolbar and image support. The agent has an `ask_user` tool (`ask.rs`): ask it to
+let you choose something.
 
 ## Tests
 

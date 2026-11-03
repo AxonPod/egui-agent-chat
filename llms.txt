@@ -27,6 +27,9 @@ Key facts for integrating:
   providers refuse them.
 - Images are off by default. Turn them on with `set_capabilities` only when the model reads
   them.
+- The agent can ask the user to choose (a form in the chat) through a tool you write: the chat
+  shows a `Question` with `ask` and reports the answer as `ChatEvent::QuestionAnswered`; your
+  code passes it back to the tool. See "Questions to the user".
 
 ## Install
 
@@ -108,6 +111,10 @@ fn main() -> anyhow::Result<()> {
   is text only. See "Images".
 - `attach(&mut self, media: agentai::Media) -> bool`: attaches an image to the message being
   written. It returns `false` and drops the image when the capabilities don't allow it.
+- `ask(&mut self, question: Question)`: shows a question form. See "Questions to the user".
+- `dismiss_question(&mut self, id: &str)`: removes a question still waiting for an answer.
+- `set_question_layout(&mut self, QuestionLayout)`: vertical (default) or horizontal choices,
+  for questions without their own layout.
 
 You can call any setter at any time, e.g. from your app's settings.
 
@@ -127,6 +134,7 @@ happened. The enum is `#[non_exhaustive]`, so match it with a `_` arm:
 - `TurnStopped`: stopped with Stop, `cancel()`, or a new `send`; the turn so far is in
   `history()`.
 - `TurnFailed { error }`: the turn failed with `error`; the turn so far is in `history()`.
+- `QuestionAnswered { id, answer }`: the user answered the question `id` asked with `ask`.
 
 Every turn starts with `TurnStarted` and ends with exactly one of the last three, except a
 turn dropped by `set_history`, which ends without an event. Events of `send` or `cancel`
@@ -187,6 +195,57 @@ JSON tree, and the result. Images that a tool returns in its `agentai::tool::Too
 (`ToolOutput::from_text(..).with_media(media)`) appear below the call, and so do absolute
 paths to existing PNG, JPEG or WebP files named in the result's text. This needs image loaders
 (`egui_extras::install_image_loaders`).
+
+## Questions to the user
+
+The agent can ask the user to choose, e.g. what to do next. The chat draws the form; a tool you
+write is the intermediary that asks and decides what the agent gets back.
+
+```rust
+use egui_agent_chat::{Answer, Choice, Question, QuestionLayout};
+
+let question = Question::new(call.id.clone(), "Which **format**?", vec![
+    Choice::text("png", "PNG"),
+    Choice::image("photo", "Like this one", media), // an agentai::Media image
+])
+.with_multiple(true)           // checkboxes; the default is one choice with radio buttons
+.with_other("Another format")  // a choice with a text field, labeled as you like
+.with_declinable(true)         // the Skip button, on by default
+.with_layout(QuestionLayout::Horizontal); // else the chat's `set_question_layout`
+chat.ask(question);
+
+for event in chat.ui(ui) {
+    if let ChatEvent::QuestionAnswered { id, answer } = event {
+        match answer {
+            // ids of the chosen choices in the question's order, and the Other text
+            Answer::Chosen { choices, other } => {}
+            Answer::Declined => {}
+            _ => {}
+        }
+    }
+}
+```
+
+`Question`, `Choice` and `Answer` are `#[non_exhaustive]`: build them with their constructors
+and `with_*` methods, and match `Answer` with a `_` arm.
+
+The usual flow: a `#[toolbox]` tool takes a `call: &agentai::ToolCall` parameter (agentai
+passes the call, it is not in the tool's schema), builds the `Question` with `call.id`, sends it
+with a `futures_channel::oneshot::Sender<Answer>` over a `std::sync::mpsc` channel to the app,
+calls `ctx.request_repaint()`, and awaits the oneshot. The app drains the channel each frame
+before `ui` and calls `chat.ask`; on `QuestionAnswered` it sends the answer to the waiting tool,
+which returns text for the agent, e.g. "The user chose: PNG". `examples/chat/ask.rs` in the
+repository is a complete `ask_user` tool.
+
+- With the id of a tool call, the form is drawn under that call. Once answered it shows the
+  answer there, until `set_history`. A question with another id is drawn at the end of the
+  chat and disappears once answered.
+- A question of a tool call in the running turn goes away when the turn ends (Stop, an error,
+  a new `send`); the tool is stopped with the turn. Others wait until answered or
+  `dismiss_question`. `set_history` clears all. Asking with the id of a pending question
+  replaces it.
+- Choosing a picture or its checkbox/radio button both select it. The Other text field gets
+  the focus when chosen, and Enter in it submits.
 
 ## Context blocks
 

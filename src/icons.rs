@@ -13,7 +13,9 @@ const FONT: &[u8] = include_bytes!("../assets/lucide/lucide.ttf");
 pub const BOT: &str = "\u{e1bb}";
 /// A brain, marks reasoning.
 pub const BRAIN: &str = "\u{e3c6}";
-/// A check mark, a tool call that succeeded.
+/// A question mark in a circle, marks questions to the user.
+pub const CIRCLE_HELP: &str = "\u{e082}";
+/// A check mark, a tool call that succeeded, or a chosen answer.
 pub const CHECK: &str = "\u{e06c}";
 /// An hourglass, a tool call that runs.
 pub const HOURGLASS: &str = "\u{e296}";

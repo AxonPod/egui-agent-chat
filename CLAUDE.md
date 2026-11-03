@@ -73,6 +73,13 @@ Releases: bump `version` in `Cargo.toml`, add its section to `CHANGELOG.md` and 
   files (`take_dropped_images`, native only) and `attach`/`Toolbar::attach` go through
   `Composer::attach`, which checks the capability. `src/media.rs` decodes base64 `Media` once into
   a cache and gives egui a `bytes://` URI. Drawing images needs the host to install image loaders.
+- **Questions (`src/question.rs`)**: `ChatPanel::ask` adds a `Pending` question (with its form
+  state) to `ChatPanel::questions`; `view::show_tool` draws, through `question::Forms`, the form
+  or the answered summary whose id is the call's id, and `Forms::show_rest` the pending ones
+  that no call showed, at the end. Answers given in the frame become
+  `ChatEvent::QuestionAnswered` and move to `SessionMarks::answers` (lost on `set_history`).
+  Pending questions of a turn's tool calls are dropped when the turn ends (`drop_questions`).
+  The tool that asks and answers the agent is the host's (see `examples/chat/ask.rs`).
 - **Toolbar extension**: `ui_with_toolbar(ui, |toolbar| ..)` runs the host's closure each frame
   for the left side of the toolbar. `Toolbar` derefs to `egui::Ui` and exposes the composer
   (`input()`, `attach()`) and `capabilities()`. Send/Stop stay on the right (`egui::Sides`).

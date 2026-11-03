@@ -48,6 +48,8 @@ dotenvy = "0.15.7"
 eframe = "0.37"
 egui_extras = { version = "0.37", features = ["all_loaders"] }
 egui_kittest = "0.37"
+# A tool waits for the user's answer in the tests and the example, on any runtime
+futures-channel = "0.3.34"
 image = { version = "0.25", default-features = false, features = [
     "png",
     "jpeg",

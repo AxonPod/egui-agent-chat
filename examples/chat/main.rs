@@ -3,19 +3,24 @@
 //! Configure the agent with environment variables, or a `.env` file: `AGENTAI_MODEL` names
 //! the model, e.g. `openai::gpt-4.1-mini`, and agentai reads the rest from the provider's usual
 //! variables, e.g. `OPENAI_API_KEY`. Image attachments are on; set
-//! `AGENTAI_IMAGES=0` for a model that cannot read images.
+//! `AGENTAI_IMAGES=0` for a model that cannot read images. The agent can ask you to choose
+//! with its `ask_user` tool (see `ask.rs`); `AGENTAI_QUESTIONS=horizontal` lays the options
+//! out side by side.
 //!
 //! ```sh
 //! cargo run --example chat
 //! cargo run --example chat --no-default-features --features smol
 //! ```
 
+mod ask;
 mod menu;
 
 use agentai::tool::buildin::CurrentDateAndTimeToolBox;
 use agentai::{Agent, Media};
 use anyhow::{Context, Result, anyhow};
-use egui_agent_chat::{ChatEvent, ChatPanel, ModelCapabilities, SendShortcut, icons};
+use egui_agent_chat::{
+    ChatEvent, ChatPanel, ModelCapabilities, QuestionLayout, SendShortcut, icons,
+};
 use menu::{AppMenu, Command, Settings};
 
 #[cfg(not(any(feature = "tokio", feature = "smol")))]
@@ -48,6 +53,7 @@ fn main() -> Result<()> {
 
 struct ChatApp {
     chat: ChatPanel,
+    questions: ask::Questions,
     menu: AppMenu,
     settings: Settings,
     // Dropped last: the chat's running turn is a task on it
@@ -59,6 +65,8 @@ impl ChatApp {
     fn new(cc: &eframe::CreationContext<'_>, agent: Agent) -> Result<Self> {
         // Shows attached images and the pictures that tools name in their results
         egui_extras::install_image_loaders(&cc.egui_ctx);
+        let (ask_user, questions) = ask::channel(cc.egui_ctx.clone());
+        let agent = agent.with_toolbox(ask_user);
         let settings = Settings {
             shift_enter_sends: false,
             toolbar: true,
@@ -73,12 +81,16 @@ impl ChatApp {
         let chat = ChatPanel::new(egui_agent_chat::SmolGlobal, agent);
         let mut app = Self {
             chat,
+            questions,
             menu: AppMenu::install(&cc.egui_ctx, settings),
             settings,
             #[cfg(feature = "tokio")]
             _runtime: runtime,
         };
         app.apply_settings();
+        if std::env::var("AGENTAI_QUESTIONS").is_ok_and(|v| v == "horizontal") {
+            app.chat.set_question_layout(QuestionLayout::Horizontal);
+        }
         Ok(app)
     }
 
@@ -146,6 +158,7 @@ impl eframe::App for ChatApp {
         for command in self.menu.window_bar(ui, self.settings) {
             self.handle(&ctx, command);
         }
+        self.questions.show(&mut self.chat);
         let events = self.chat.ui_with_toolbar(ui, |toolbar| {
             // Off for a text-only model, which could not read the image
             let images = toolbar.capabilities().images;
@@ -167,6 +180,7 @@ impl eframe::App for ChatApp {
         });
         // The chat shows all of this too; an app could save the history or update its status
         for event in events {
+            self.questions.answer(&event);
             match event {
                 ChatEvent::ToolCalled(call) => eprintln!("tool: {}", call.name),
                 ChatEvent::TurnFailed { error } => eprintln!("the turn failed: {error}"),

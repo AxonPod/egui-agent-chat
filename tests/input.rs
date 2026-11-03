@@ -5,9 +5,11 @@ mod common;
 
 use egui::accesskit::Role;
 use egui::{Event, Key, KeyboardShortcut, Modifiers};
-use egui_agent_chat::{ChatEvent, ChatPanel, SendShortcut};
+use egui_agent_chat::{
+    Answer, ChatEvent, ChatPanel, Choice, Question, QuestionLayout, SendShortcut,
+};
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 use std::cell::RefCell;
 use std::net::TcpListener;
 use std::rc::Rc;
@@ -261,4 +263,149 @@ fn two_chats_in_one_frame_have_their_own_input() {
         .map(|input| input.value())
         .collect();
     assert_eq!(values, [Some("left".to_owned()), Some(String::new())]);
+}
+
+/// A chat whose events are collected, with nothing typed.
+fn harness_with_events(
+    runtime: &tokio::runtime::Runtime,
+) -> (Harness<'static, ChatPanel>, Rc<RefCell<Vec<ChatEvent>>>) {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let seen = events.clone();
+    let harness = harness_with_ui(
+        runtime,
+        |_| {},
+        move |ui, chat| seen.borrow_mut().extend(chat.ui(ui)),
+    );
+    (harness, events)
+}
+
+fn colors() -> Question {
+    Question::new(
+        "q1",
+        "Which color?",
+        vec![Choice::text("red", "Red"), Choice::text("blue", "Blue")],
+    )
+}
+
+fn submit_disabled(harness: &Harness<'_, ChatPanel>) -> bool {
+    harness
+        .get_by_label("Submit")
+        .accesskit_node()
+        .is_disabled()
+}
+
+fn answered(events: &[ChatEvent]) -> Vec<(String, Answer)> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            ChatEvent::QuestionAnswered { id, answer } => Some((id.clone(), answer.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_question_is_answered_with_one_choice() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let (mut harness, events) = harness_with_events(&runtime);
+    harness.state_mut().ask(colors());
+    harness.run();
+    assert!(submit_disabled(&harness), "nothing chosen yet");
+
+    harness.get_by_label("Red").click();
+    harness.run();
+    harness.get_by_label("Blue").click();
+    harness.run();
+    harness.get_by_label("Submit").click();
+    harness.run();
+    let chosen = Answer::Chosen {
+        choices: vec!["blue".into()],
+        other: None,
+    };
+    assert_eq!(answered(&events.borrow()), [("q1".into(), chosen)]);
+    assert!(
+        harness.query_by_label("Submit").is_none(),
+        "the form stayed"
+    );
+}
+
+#[test]
+fn other_takes_the_users_own_answer() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let (mut harness, events) = harness_with_events(&runtime);
+    harness
+        .state_mut()
+        .ask(colors().with_other("Another color"));
+    harness.run();
+    harness.get_by_label("Another color").click();
+    harness.run();
+    assert!(submit_disabled(&harness), "Other without text");
+
+    // The text field has the focus
+    harness.event(Event::Text("green".into()));
+    harness.run();
+    harness.key_press(Key::Enter);
+    harness.run();
+    let chosen = Answer::Chosen {
+        choices: Vec::new(),
+        other: Some("green".into()),
+    };
+    assert_eq!(answered(&events.borrow()), [("q1".into(), chosen)]);
+    assert!(harness.state().history().is_empty());
+}
+
+#[test]
+fn several_images_can_be_chosen_side_by_side() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let (mut harness, events) = harness_with_events(&runtime);
+    harness
+        .state_mut()
+        .set_question_layout(QuestionLayout::Horizontal);
+    let question = Question::new(
+        "q2",
+        "Which pictures?",
+        vec![
+            Choice::image("one", "First", image()),
+            Choice::image("two", "Second", image()),
+        ],
+    )
+    .with_multiple(true);
+    harness.state_mut().ask(question);
+    harness.run();
+    // The picture and its checkbox both choose
+    harness.get_by_role_and_label(Role::Image, "Second").click();
+    harness.run();
+    harness
+        .get_by_role_and_label(Role::CheckBox, "First")
+        .click();
+    harness.run();
+    harness.get_by_label("Submit").click();
+    harness.run();
+    let chosen = Answer::Chosen {
+        choices: vec!["one".into(), "two".into()],
+        other: None,
+    };
+    assert_eq!(answered(&events.borrow()), [("q2".into(), chosen)]);
+}
+
+#[test]
+fn a_question_can_be_declined_or_dismissed() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let (mut harness, events) = harness_with_events(&runtime);
+    harness.state_mut().ask(colors());
+    harness.run();
+    harness.get_by_label("Skip").click();
+    harness.run();
+    assert_eq!(
+        answered(&events.borrow()),
+        [("q1".into(), Answer::Declined)]
+    );
+
+    harness.state_mut().ask(colors().with_declinable(false));
+    harness.run();
+    assert!(harness.query_by_label("Skip").is_none());
+    harness.state_mut().dismiss_question("q1");
+    harness.run();
+    assert!(harness.query_by_label("Submit").is_none());
+    assert_eq!(answered(&events.borrow()).len(), 1);
 }

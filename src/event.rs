@@ -1,5 +1,6 @@
 //! What happened in the chat, for the host to react to.
 
+use crate::Answer;
 use agentai::ToolCall;
 
 /// Something that happened in the chat, returned by [`ChatPanel::ui`](crate::ChatPanel::ui)
@@ -37,5 +38,12 @@ pub enum ChatEvent {
     TurnFailed {
         /// What went wrong.
         error: String,
+    },
+    /// The user answered the question `id` asked with [`ask`](crate::ChatPanel::ask).
+    QuestionAnswered {
+        /// The [`Question::id`](crate::Question::id) of the question.
+        id: String,
+        /// What the user chose, or that they declined.
+        answer: Answer,
     },
 }

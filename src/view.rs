@@ -3,6 +3,7 @@
 use crate::context::split_context;
 use crate::icons;
 use crate::media::MediaCache;
+use crate::question::Forms;
 use crate::{Composer, InputSettings, Note, SessionMarks, Toolbar, Turn};
 use agentai::{Media, Message, Part, Prompt, Role, ToolCall, ToolResponse};
 use egui::{
@@ -150,6 +151,7 @@ pub fn conversation(
     history: &[Message],
     turn: Option<&Turn>,
     marks: &SessionMarks,
+    forms: &mut Forms,
 ) {
     ScrollArea::vertical()
         .id_salt(id.with("messages"))
@@ -158,7 +160,7 @@ pub fn conversation(
         .show(ui, |ui| {
             Frame::new()
                 .inner_margin(Margin::symmetric(MARGIN, 0))
-                .show(ui, |ui| messages(ui, cache, history, turn, marks));
+                .show(ui, |ui| messages(ui, cache, history, turn, marks, forms));
         });
 }
 
@@ -168,14 +170,23 @@ fn messages(
     history: &[Message],
     turn: Option<&Turn>,
     marks: &SessionMarks,
+    forms: &mut Forms,
 ) {
     ui.set_width(ui.available_width());
-    if history.is_empty() && turn.is_none() {
+    if history.is_empty() && turn.is_none() && !forms.has_pending() {
         ui.add_space(24.0);
         ui.vertical_centered(|ui| ui.weak("No messages yet"));
     }
     ui.push_id("history", |ui| {
-        show_messages(ui, cache, history, &marks.failed_tools, &marks.notes, false);
+        show_messages(
+            ui,
+            cache,
+            history,
+            &marks.failed_tools,
+            &marks.notes,
+            forms,
+            false,
+        );
     });
     if let Some(turn) = turn {
         ui.push_id("turn", |ui| {
@@ -187,10 +198,12 @@ fn messages(
                 &turn.messages,
                 &marks.failed_tools,
                 &no_notes,
+                forms,
                 true,
             );
         });
     }
+    ui.push_id("questions", |ui| forms.show_rest(ui, cache));
     ui.add_space(8.0);
 }
 
@@ -253,6 +266,7 @@ fn show_messages(
     messages: &[Message],
     failed_tools: &HashSet<String>,
     notes: &HashMap<usize, Note>,
+    forms: &mut Forms,
     running: bool,
 ) {
     let mut groups = groups(messages);
@@ -269,7 +283,9 @@ fn show_messages(
         ui.push_id(i, |ui| {
             match group.speaker {
                 Speaker::User => show_user(ui, cache, group),
-                Speaker::Agent => show_agent(ui, cache, group, failed_tools, running && i == last),
+                Speaker::Agent => {
+                    show_agent(ui, cache, group, failed_tools, forms, running && i == last)
+                }
             }
             if let Some(note) = notes.get(&group.last) {
                 show_note(ui, note);
@@ -291,7 +307,7 @@ fn show_note(ui: &mut Ui, note: &Note) {
 }
 
 /// Space between the bubbles.
-const GROUP_SPACING: f32 = 12.0;
+pub(crate) const GROUP_SPACING: f32 = 12.0;
 
 /// A spinner as tall as a line of text.
 fn spinner(ui: &mut Ui) {
@@ -405,6 +421,7 @@ fn show_agent(
     cache: &mut Caches,
     group: &Group,
     failed_tools: &HashSet<String>,
+    forms: &mut Forms,
     running: bool,
 ) {
     ui.horizontal(|ui| {
@@ -433,13 +450,16 @@ fn show_agent(
                     .default_open(false)
                     .show(ui, |ui| ui.label(RichText::new(text).weak().italics()));
                 }
-                Part::ToolCall(call) => show_tool(
-                    ui,
-                    &mut cache.media,
-                    call,
-                    tool_result(&group.messages, &call.id),
-                    failed_tools.contains(&call.id),
-                ),
+                Part::ToolCall(call) => {
+                    show_tool(
+                        ui,
+                        &mut cache.media,
+                        call,
+                        tool_result(&group.messages, &call.id),
+                        failed_tools.contains(&call.id),
+                    );
+                    forms.show(ui, cache, &call.id);
+                }
                 _ => {}
             });
         }
