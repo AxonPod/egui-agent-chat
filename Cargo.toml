@@ -21,7 +21,7 @@ smol = ["dep:smol", "dep:async-compat"]
 
 [dependencies]
 # agentai 0.5 is not released yet: its `feat/image-generation` branch, with the genai it needs (see the patch)
-agentai = { git = "https://github.com/AdamStrojek/rust-agentai", rev = "df4251a1a735af4bd69b67c6e8bfb62ed06fd86c", default-features = false }
+agentai = { git = "https://github.com/AdamStrojek/rust-agentai", branch = "feat/image-generation", default-features = false }
 async-compat = { version = "0.2.6", optional = true }
 base64 = "0.23.1"
 egui = "0.37"
@@ -36,7 +36,7 @@ tokio = { version = "1", features = ["rt"], optional = true }
 [dev-dependencies]
 # The tests' #[toolbox], the example's date and time tool, and TLS for the example and the
 # live tests (the library leaves the TLS backend to the app)
-agentai = { git = "https://github.com/AdamStrojek/rust-agentai", rev = "df4251a1a735af4bd69b67c6e8bfb62ed06fd86c", default-features = false, features = [
+agentai = { git = "https://github.com/AdamStrojek/rust-agentai", branch = "feat/image-generation", default-features = false, features = [
     "macros",
     "tools-buildin",
     "rustls-ring",
@@ -59,7 +59,7 @@ tokio = { version = "1", features = ["rt-multi-thread"] }
 
 # Tool results with images need a genai release that is not on crates.io yet
 [patch.crates-io]
-genai = { git = "https://github.com/AdamStrojek/rust-genai", rev = "85e2472615f67e20074da9cd5873cbea8dfe960f" }
+genai = { git = "https://github.com/AdamStrojek/rust-genai", branch = "main" }
 
 [[test]]
 name = "agent"
