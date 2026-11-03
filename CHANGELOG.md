@@ -19,8 +19,10 @@
 - Images that tools return in their `ToolOutput` are shown below the call.
 - Questions to the user: `ChatPanel::ask(Question)` shows a form in the chat with the agent's
   choices, text (`Choice::text`) or pictures (`Choice::image`), one (radio buttons) or several
-  (checkboxes, `with_multiple`), an optional "Other" choice with a text field (`with_other`)
-  and Skip (`with_declinable`). The answer comes as `ChatEvent::QuestionAnswered { id, answer }`.
+  (checkboxes, `with_multiple`), an optional "Other" choice below them with a multi-line text field that chooses it when
+  written in (`with_other`, `with_other_hint`), and a decline button (`with_declinable`,
+  `with_declinable_label`). Pictures are shown up to `with_image_size` and can be opened large.
+  Submit says what is missing while it is disabled. The answer comes as `ChatEvent::QuestionAnswered { id, answer }`.
   A question with a tool call's id is drawn under that call and keeps its answer there.
   `set_question_layout` and `Question::with_layout` lay the choices out vertically or
   horizontally; `dismiss_question` removes a waiting one. The tool that asks and answers the

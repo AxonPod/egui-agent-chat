@@ -209,8 +209,11 @@ let question = Question::new(call.id.clone(), "Which **format**?", vec![
     Choice::image("photo", "Like this one", media), // an agentai::Media image
 ])
 .with_multiple(true)           // checkboxes; the default is one choice with radio buttons
-.with_other("Another format")  // a choice with a text field, labeled as you like
-.with_declinable(true)         // the Skip button, on by default
+.with_other("Another format")  // a choice below the others, with a multi-line text field
+.with_other_hint("Which one?") // a hint in that empty field; none by default
+.with_declinable_label("None of them") // the decline button, "Skip" by default
+// .with_declinable(false)     // no decline button
+.with_image_size(egui::vec2(200.0, 200.0)) // the largest image size, 160×160 by default
 .with_layout(QuestionLayout::Horizontal); // else the chat's `set_question_layout`
 chat.ask(question);
 
@@ -244,8 +247,13 @@ repository is a complete `ask_user` tool.
   a new `send`); the tool is stopped with the turn. Others wait until answered or
   `dismiss_question`. `set_history` clears all. Asking with the id of a pending question
   replaces it.
-- Choosing a picture or its checkbox/radio button both select it. The Other text field gets
-  the focus when chosen, and Enter in it submits.
+- Choosing a picture or its checkbox/radio button both select it; the button next to it
+  (accessibility label "Enlarge") shows the picture large in a modal, closed with Close, Esc or
+  a click outside.
+- Only the choices follow the layout. Other is always below them, with a multi-line text field
+  that takes the rest of the width; writing in it chooses Other, and choosing Other focuses it.
+- Submit is disabled until the answer is complete, and a note beside it says what is missing
+  ("Choose an answer to submit", "Write your answer to submit").
 
 ## Context blocks
 

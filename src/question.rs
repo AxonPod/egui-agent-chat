@@ -42,11 +42,18 @@ pub struct Question {
     pub multiple: bool,
     /// The label of a choice that lets the user write their own answer, if it is offered.
     pub other: Option<String>,
-    /// The user may decline the question with Skip. On by default.
+    /// The hint shown in the empty text field of [`other`](Self::other); none by default.
+    pub other_hint: Option<String>,
+    /// The user may decline the question with a button. On by default.
     pub declinable: bool,
+    /// The label of the button that declines; `None` for "Skip".
+    pub decline_label: Option<String>,
     /// How the choices are laid out; `None` uses
     /// [`ChatPanel::set_question_layout`](crate::ChatPanel::set_question_layout).
     pub layout: Option<QuestionLayout>,
+    /// The largest size of the images to choose, in points; `None` for 160×160. The user can
+    /// also open each of them large.
+    pub image_size: Option<egui::Vec2>,
 }
 
 impl Question {
@@ -58,8 +65,11 @@ impl Question {
             choices,
             multiple: false,
             other: None,
+            other_hint: None,
             declinable: true,
+            decline_label: None,
             layout: None,
+            image_size: None,
         }
     }
 
@@ -69,16 +79,42 @@ impl Question {
         self
     }
 
-    /// Adds a choice labeled `label` with a text field, for an answer of the user's own.
+    /// Adds a choice labeled `label`, below the others, with a text field for an answer of the
+    /// user's own or notes. Writing in the field chooses it.
     pub fn with_other(mut self, label: impl Into<String>) -> Self {
         self.other = Some(label.into());
         self
     }
 
-    /// Sets whether the user may decline the question with Skip.
+    /// Shows `hint` in the empty text field of [`with_other`](Self::with_other), e.g. "What
+    /// should change?".
+    pub fn with_other_hint(mut self, hint: impl Into<String>) -> Self {
+        self.other_hint = Some(hint.into());
+        self
+    }
+
+    /// Sets whether the user may decline the question, with Skip unless
+    /// [`with_declinable_label`](Self::with_declinable_label) names the button.
     pub fn with_declinable(mut self, declinable: bool) -> Self {
         self.declinable = declinable;
         self
+    }
+
+    /// Lets the user decline the question with a button labeled `label`, e.g. "None of them".
+    pub fn with_declinable_label(mut self, label: impl Into<String>) -> Self {
+        self.declinable = true;
+        self.decline_label = Some(label.into());
+        self
+    }
+
+    /// Shows the images to choose up to `size` points, keeping their aspect ratio.
+    pub fn with_image_size(mut self, size: egui::Vec2) -> Self {
+        self.image_size = Some(size);
+        self
+    }
+
+    fn decline_label(&self) -> &str {
+        self.decline_label.as_deref().unwrap_or("Skip")
     }
 
     /// Lays out the choices of this question as `layout`, whatever the chat's default.
@@ -141,7 +177,8 @@ pub enum Answer {
         /// What the user wrote, if they chose [`Question::other`].
         other: Option<String>,
     },
-    /// The user declined the question with Skip.
+    /// The user declined the question, with Skip or the button of
+    /// [`Question::with_declinable_label`].
     Declined,
 }
 
@@ -167,6 +204,8 @@ struct Form {
     chosen: Vec<bool>,
     other: bool,
     other_text: String,
+    /// The choice whose image is shown large.
+    enlarged: Option<usize>,
 }
 
 impl Form {
@@ -184,6 +223,17 @@ impl Form {
                 self.chosen[i] = true;
             }
             self.other = i.is_none();
+        }
+    }
+
+    /// What the user still has to do before submitting, `None` when the answer is complete.
+    fn missing(&self) -> Option<&'static str> {
+        if self.other && self.other_text.trim().is_empty() {
+            Some("Write your answer to submit")
+        } else if !self.other && !self.chosen.contains(&true) {
+            Some("Choose an answer to submit")
+        } else {
+            None
         }
     }
 
@@ -268,8 +318,8 @@ impl<'a> Forms<'a> {
     }
 }
 
-/// Largest size of an image to choose.
-const CHOICE_IMAGE_SIZE: egui::Vec2 = egui::vec2(160.0, 120.0);
+/// Largest size of an image to choose, unless the question sets one.
+const CHOICE_IMAGE_SIZE: egui::Vec2 = egui::vec2(160.0, 160.0);
 /// Largest size of a chosen image in the answer.
 const ANSWER_IMAGE_SIZE: egui::Vec2 = egui::vec2(64.0, 48.0);
 
@@ -307,66 +357,118 @@ fn form(
     card(ui, &question.id, |ui| {
         header(ui, cache, question);
         let multiple = question.multiple;
-        let mut submit = false;
+        let image_size = question.image_size.unwrap_or(CHOICE_IMAGE_SIZE);
+        // Only the choices follow the layout; Other and its notes go below them
         let choices = |ui: &mut Ui| {
             for (i, choice) in question.choices.iter().enumerate() {
                 ui.push_id(i, |ui| {
-                    if show_choice(ui, cache, multiple, choice, form.chosen[i]) {
-                        form.choose(multiple, Some(i));
+                    let clicked =
+                        show_choice(ui, cache, multiple, choice, form.chosen[i], image_size);
+                    match clicked {
+                        Some(Click::Choose) => form.choose(multiple, Some(i)),
+                        Some(Click::Enlarge) => form.enlarged = Some(i),
+                        None => {}
                     }
                 });
-            }
-            if let Some(label) = &question.other {
-                let clicked = if multiple {
-                    let mut chosen = form.other;
-                    ui.checkbox(&mut chosen, label).changed()
-                } else {
-                    ui.radio(form.other, label).clicked()
-                };
-                if clicked {
-                    form.choose(multiple, None);
-                }
-                if form.other {
-                    let text = ui.add(
-                        TextEdit::singleline(&mut form.other_text)
-                            .hint_text(label.as_str())
-                            .desired_width(240.0),
-                    );
-                    if clicked {
-                        text.request_focus();
-                    }
-                    submit = text.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                }
             }
         };
         match layout {
             QuestionLayout::Vertical => ui.vertical(choices),
             QuestionLayout::Horizontal => ui.horizontal_wrapped(choices),
         };
+        if let Some(label) = &question.other {
+            let mark = if multiple {
+                let mut chosen = form.other;
+                ui.checkbox(&mut chosen, label)
+            } else {
+                ui.radio(form.other, label)
+            };
+            let clicked = mark.clicked();
+            if clicked {
+                form.choose(multiple, None);
+            }
+            let mut field = TextEdit::multiline(&mut form.other_text)
+                .desired_rows(2)
+                .desired_width(f32::INFINITY);
+            if let Some(hint) = &question.other_hint {
+                field = field.hint_text(hint.as_str());
+            }
+            // Screen readers name the field after its choice
+            let text = ui.add(field).labelled_by(mark.id);
+            if clicked && form.other {
+                text.request_focus();
+            }
+            // Writing is choosing it
+            if text.changed() && !form.other && !form.other_text.trim().is_empty() {
+                form.choose(multiple, None);
+            }
+        }
         let answer = form.answer(question);
+        let missing = form.missing();
         let mut result = None;
         ui.horizontal(|ui| {
-            let button = ui.add_enabled(answer.is_some(), egui::Button::new("Submit"));
-            if button.clicked() || submit {
+            let mut button = ui.add_enabled(answer.is_some(), egui::Button::new("Submit"));
+            if let Some(missing) = missing {
+                button = button.on_disabled_hover_text(missing);
+            }
+            if button.clicked() {
                 result = answer;
             }
-            if question.declinable && ui.button("Skip").clicked() {
+            if question.declinable && ui.button(question.decline_label()).clicked() {
                 result = Some(Answer::Declined);
             }
+            if let Some(missing) = missing {
+                ui.weak(missing);
+            }
         });
+        if let Some(i) = form.enlarged {
+            let open = enlarged(ui, cache, &question.choices[i]);
+            if !open {
+                form.enlarged = None;
+            }
+        }
         result
     })
 }
 
+/// What a click on a choice does.
+enum Click {
+    Choose,
+    Enlarge,
+}
+
+/// The image of `choice` large, over the app. Returns whether it stays open.
+fn enlarged(ui: &mut Ui, cache: &mut Caches, choice: &Choice) -> bool {
+    let Some(image) = choice.image.as_ref().and_then(|m| cache.media.image(m)) else {
+        return false;
+    };
+    let max_size = ui.ctx().content_rect().size() * 0.85;
+    let modal = egui::Modal::new(ui.scope_id().with("enlarged")).show(ui.ctx(), |ui| {
+        ui.add(
+            image
+                .fit_to_original_size(1.0)
+                .max_size(max_size - egui::vec2(0.0, 48.0)),
+        );
+        ui.horizontal(|ui| {
+            let close = ui.button("Close").clicked();
+            ui.label(&choice.label);
+            close
+        })
+        .inner
+    });
+    !(modal.inner || modal.should_close())
+}
+
 /// One choice: a radio button or checkbox, above it the image to choose, which can be clicked
-/// too. Returns whether it was clicked.
+/// too, and a button that shows the image large.
 fn show_choice(
     ui: &mut Ui,
     cache: &mut Caches,
     multiple: bool,
     choice: &Choice,
     chosen: bool,
-) -> bool {
+    image_size: egui::Vec2,
+) -> Option<Click> {
     let mark = |ui: &mut Ui| {
         if multiple {
             let mut checked = chosen;
@@ -376,7 +478,7 @@ fn show_choice(
         }
     };
     let Some(image) = choice.image.as_ref().and_then(|m| cache.media.image(m)) else {
-        return mark(ui);
+        return mark(ui).then_some(Click::Choose);
     };
     let visuals = ui.visuals();
     let stroke = if chosen {
@@ -392,12 +494,24 @@ fn show_choice(
             ui.vertical(|ui| {
                 let image = image
                     .fit_to_original_size(1.0)
-                    .max_size(CHOICE_IMAGE_SIZE)
+                    .max_size(image_size)
                     .corner_radius(CornerRadius::same(4))
                     .sense(egui::Sense::click());
                 let picture = ui.add(image).on_hover_text(&choice.label);
-                let marked = mark(ui);
-                picture.clicked() || marked
+                ui.horizontal(|ui| {
+                    let marked = mark(ui);
+                    let enlarge = ui.small_button(icons::MAXIMIZE).on_hover_text("Enlarge");
+                    // Screen readers say "Enlarge", not the icon
+                    enlarge.widget_info(|| {
+                        egui::WidgetInfo::labeled(egui::Role::Button, true, "Enlarge")
+                    });
+                    if enlarge.clicked() {
+                        Some(Click::Enlarge)
+                    } else {
+                        (picture.clicked() || marked).then_some(Click::Choose)
+                    }
+                })
+                .inner
             })
             .inner
         })
@@ -409,7 +523,7 @@ fn summary(ui: &mut Ui, cache: &mut Caches, question: &Question, answer: &Answer
     card(ui, &question.id, |ui| {
         header(ui, cache, question);
         let Answer::Chosen { choices, other } = answer else {
-            ui.weak("Skipped");
+            ui.weak(question.decline_label());
             return;
         };
         ui.horizontal_wrapped(|ui| {

@@ -337,18 +337,25 @@ fn other_takes_the_users_own_answer() {
         .state_mut()
         .ask(colors().with_other("Another color"));
     harness.run();
-    harness.get_by_label("Another color").click();
+    harness
+        .get_by_role_and_label(Role::RadioButton, "Another color")
+        .click();
     harness.run();
     assert!(submit_disabled(&harness), "Other without text");
 
     // The text field has the focus
     harness.event(Event::Text("green".into()));
     harness.run();
+    // A multi-line field: Enter adds a line, it does not submit
     harness.key_press(Key::Enter);
+    harness.event(Event::Text("but darker".into()));
+    harness.run();
+    assert!(answered(&events.borrow()).is_empty());
+    harness.get_by_label("Submit").click();
     harness.run();
     let chosen = Answer::Chosen {
         choices: Vec::new(),
-        other: Some("green".into()),
+        other: Some("green\nbut darker".into()),
     };
     assert_eq!(answered(&events.borrow()), [("q1".into(), chosen)]);
     assert!(harness.state().history().is_empty());
@@ -408,4 +415,86 @@ fn a_question_can_be_declined_or_dismissed() {
     harness.run();
     assert!(harness.query_by_label("Submit").is_none());
     assert_eq!(answered(&events.borrow()).len(), 1);
+}
+
+#[test]
+fn writing_in_the_other_field_chooses_it() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let (mut harness, events) = harness_with_events(&runtime);
+    harness.state_mut().ask(
+        colors()
+            .with_other("Something is wrong")
+            .with_other_hint("What should change?"),
+    );
+    harness.run();
+    assert!(
+        harness
+            .query_by_label("Choose an answer to submit")
+            .is_some(),
+        "Submit does not say what is missing"
+    );
+
+    harness.get_by_label("Red").click();
+    harness.run();
+    harness
+        .get_by_role_and_label(Role::RadioButton, "Something is wrong")
+        .click();
+    harness.run();
+    assert!(
+        harness
+            .query_by_label("Write your answer to submit")
+            .is_some()
+    );
+    // Back to Red: the field stays, and writing in it chooses Other again
+    harness.get_by_label("Red").click();
+    harness.run();
+    harness
+        .get_by_role_and_label(Role::MultilineTextInput, "Something is wrong")
+        .click();
+    harness.run();
+    harness.event(Event::Text("too dark".into()));
+    harness.run();
+    harness.get_by_label("Submit").click();
+    harness.run();
+    let chosen = Answer::Chosen {
+        choices: Vec::new(),
+        other: Some("too dark".into()),
+    };
+    assert_eq!(answered(&events.borrow()), [("q1".into(), chosen)]);
+}
+
+#[test]
+fn the_decline_button_can_be_named() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let (mut harness, events) = harness_with_events(&runtime);
+    harness
+        .state_mut()
+        .ask(colors().with_declinable_label("None of them"));
+    harness.run();
+    assert!(harness.query_by_label("Skip").is_none());
+    harness.get_by_label("None of them").click();
+    harness.run();
+    assert_eq!(
+        answered(&events.borrow()),
+        [("q1".into(), Answer::Declined)]
+    );
+}
+
+#[test]
+fn an_image_can_be_shown_large() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let (mut harness, events) = harness_with_events(&runtime);
+    let question = Question::new("q3", "Which?", vec![Choice::image("one", "First", image())])
+        .with_image_size(egui::vec2(48.0, 48.0));
+    harness.state_mut().ask(question);
+    harness.run();
+    harness.get_by_label("Enlarge").click();
+    harness.run();
+    assert!(harness.query_by_label("Close").is_some(), "not enlarged");
+    harness.get_by_label("Close").click();
+    harness.run();
+    assert!(harness.query_by_label("Close").is_none(), "not closed");
+    // Enlarging does not choose
+    assert!(submit_disabled(&harness));
+    assert!(answered(&events.borrow()).is_empty());
 }

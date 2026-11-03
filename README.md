@@ -160,9 +160,11 @@ Messages are then sent with the shortcut only, and an answer can be stopped only
 ### How to let the agent ask the user
 
 `chat.ask(question)` shows a form in the chat: the question, its choices as radio buttons (or
-checkboxes with `with_multiple(true)`), optionally an "Other" choice with a text field, and
-Submit and Skip. A choice is text (`Choice::text`) or a picture (`Choice::image`, needs image
-loaders). The answer comes back as `ChatEvent::QuestionAnswered { id, answer }`, with the ids
+checkboxes with `with_multiple(true)`), optionally an "Other" choice below them with a multi-line text field (`with_other`, with
+`with_other_hint` for a hint in it; writing in it chooses it), and Submit and Skip
+(`with_declinable_label("None of them")` renames it, `with_declinable(false)` hides it). A
+choice is text (`Choice::text`) or a picture (`Choice::image`, needs image loaders), shown up to
+160×160 points or `with_image_size(..)`, with a button that shows it large. The answer comes back as `ChatEvent::QuestionAnswered { id, answer }`, with the ids
 of the chosen choices and the Other text, or `Answer::Declined`.
 
 ```rust

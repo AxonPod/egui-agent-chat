@@ -23,6 +23,8 @@ pub const HOURGLASS: &str = "\u{e296}";
 pub const IMAGE: &str = "\u{e0f6}";
 /// A plus on a picture, e.g. for an "attach image" button.
 pub const IMAGE_PLUS: &str = "\u{e1f7}";
+/// Two arrows apart, shows an image large.
+pub const MAXIMIZE: &str = "\u{e113}";
 /// A paperclip, marks context blocks and files.
 pub const PAPERCLIP: &str = "\u{e12d}";
 /// A paper plane, the send button.
