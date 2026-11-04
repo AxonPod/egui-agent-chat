@@ -134,8 +134,9 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agentai"
-version = "0.4.0"
-source = "git+https://github.com/AdamStrojek/rust-agentai?branch=feat%2Fimage-generation#1c8740b7f51954b1b0bd7586f32bafba962e5c7f"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8e39b3165b848bd1ccd4d7d8fbf13edc5e1ca86b46fbdba981bef8ddb8b9acc"
 dependencies = [
  "agentai-core",
  "agentai-macros",
@@ -157,8 +158,9 @@ dependencies = [
 
 [[package]]
 name = "agentai-core"
-version = "0.4.0"
-source = "git+https://github.com/AdamStrojek/rust-agentai?branch=feat%2Fimage-generation#1c8740b7f51954b1b0bd7586f32bafba962e5c7f"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13f14af320ad240a69f964ff0bb6e58671c3dddb3b7ff66b698af6d4cbebbb1a"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -172,8 +174,9 @@ dependencies = [
 
 [[package]]
 name = "agentai-macros"
-version = "0.4.0"
-source = "git+https://github.com/AdamStrojek/rust-agentai?branch=feat%2Fimage-generation#1c8740b7f51954b1b0bd7586f32bafba962e5c7f"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "00795547b385997f76b86884e203058ce20df66bf101dc7940d35154b951fdf1"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -1908,7 +1911,8 @@ dependencies = [
 [[package]]
 name = "genai"
 version = "0.7.3"
-source = "git+https://github.com/AdamStrojek/rust-genai?branch=main#85e2472615f67e20074da9cd5873cbea8dfe960f"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0361e6fb702a22e099ff01431b31696001aaac544fc11d98a1e6090bde49bba0"
 dependencies = [
  "base64 0.23.1",
  "bytes",
@@ -5137,7 +5141,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.5",
  "windows-sys 0.61.2",
