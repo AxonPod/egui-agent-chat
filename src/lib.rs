@@ -133,7 +133,31 @@
 //! # Context blocks
 //!
 //! A prompt may carry long material, such as a document, wrapped with [`context_block`]. The
-//! chat shows each block collapsed under its title instead of in full.
+//! chat shows each block collapsed under its title instead of in full. A block wrapped with
+//! [`context_block_hidden`] goes to the model but is not shown at all. The blocks are plain
+//! text in the user's message, so a saved and restored history keeps them for the model.
+//!
+//! The input sends what the user writes by itself, so to add context to the user's next
+//! message, e.g. what changed in their project since the last one, give it to
+//! [`ChatPanel::set_pending_context`]. The next message, written or sent with
+//! [`ChatPanel::send`], starts with those blocks, and [`ChatEvent::TurnStarted`] tells you they
+//! went with it:
+//!
+//! ```no_run
+//! # fn show(chat: &mut egui_agent_chat::ChatPanel, ui: &mut egui::Ui, diff: String) {
+//! use egui_agent_chat::ChatEvent;
+//!
+//! chat.set_pending_context(
+//!     vec![("Project changes".to_owned(), diff)],
+//!     Some("Project changes will be sent with your message".to_owned()),
+//! );
+//! for event in chat.ui(ui) {
+//!     if let ChatEvent::TurnStarted = event {
+//!         // The changes went with the message
+//!     }
+//! }
+//! # }
+//! ```
 
 #![warn(missing_docs)]
 
@@ -150,7 +174,7 @@ mod toolbar;
 mod view;
 
 pub use capabilities::ModelCapabilities;
-pub use context::{ContextBlock, context_block, split_context};
+pub use context::{ContextBlock, context_block, context_block_hidden, split_context};
 pub use event::ChatEvent;
 pub use question::{Answer, Choice, Question, QuestionLayout};
 pub use shortcut::SendShortcut;
@@ -251,6 +275,10 @@ pub struct ChatPanel {
     id: egui::Id,
     /// Not yet returned by `ui`.
     events: Vec<ChatEvent>,
+    /// Context blocks (title, body) that go with the next message.
+    pending_context: Vec<(String, String)>,
+    /// Shown over the input while `pending_context` waits.
+    pending_label: Option<String>,
 }
 
 impl ChatPanel {
@@ -278,6 +306,8 @@ impl ChatPanel {
                 egui::Id::unique(("egui_agent_chat", NEXT.fetch_add(1, Ordering::Relaxed)))
             },
             events: Vec::new(),
+            pending_context: Vec::new(),
+            pending_label: None,
         }
     }
 
@@ -361,6 +391,19 @@ impl ChatPanel {
         self.composer.text = text.into();
     }
 
+    /// Sets the context that goes with the next message, whether the user writes it or you
+    /// [`send`](Self::send) it: each (title, body) becomes a [`context_block`] before the
+    /// message's text, followed by a blank line, and the list is then emptied. Call it on any
+    /// frame; it replaces the context set before, and an empty list sets none.
+    /// [`ChatEvent::TurnStarted`] tells you the context went with a message.
+    ///
+    /// `label`, e.g. "Project changes will be sent with your message", is shown dimmed over
+    /// the input while the context waits. [`set_history`](Self::set_history) keeps both.
+    pub fn set_pending_context(&mut self, blocks: Vec<(String, String)>, label: Option<String>) {
+        self.pending_context = blocks;
+        self.pending_label = label;
+    }
+
     /// Whether the agent is working on an answer.
     pub fn is_running(&self) -> bool {
         self.turn.is_some()
@@ -371,10 +414,13 @@ impl ChatPanel {
     ///
     /// `prompt` is anything agentai accepts: text, or an [`agentai::Prompt`] with images, e.g.
     /// `Prompt::text("What is in it?").with_image_bytes("image/png", &png)`. The chat does
-    /// not check those images against [`set_capabilities`](Self::set_capabilities).
+    /// not check those images against [`set_capabilities`](Self::set_capabilities). The
+    /// [pending context](Self::set_pending_context) goes before its text.
     pub fn send(&mut self, ctx: &egui::Context, prompt: impl IntoPrompt) {
         self.cancel();
-        let prompt = prompt.into_prompt();
+        let blocks = std::mem::take(&mut self.pending_context);
+        self.pending_label = None;
+        let prompt = with_context(prompt.into_prompt(), &blocks);
         let shown = Message::new(Role::User, prompt.parts().to_vec());
         let running = run::spawn(
             self.spawner.as_ref(),
@@ -447,6 +493,9 @@ impl ChatPanel {
             &mut self.composer,
             running,
             self.settings,
+            self.pending_label
+                .as_deref()
+                .filter(|_| !self.pending_context.is_empty()),
             &mut self.cache,
             add_widgets,
         );
@@ -557,6 +606,42 @@ impl ChatPanel {
     }
 }
 
+/// `prompt` with the context `blocks` (title, body) before its text, or before everything when
+/// it has no text.
+fn with_context(prompt: Prompt, blocks: &[(String, String)]) -> Prompt {
+    if blocks.is_empty() {
+        return prompt;
+    }
+    let mut context: String = blocks
+        .iter()
+        .map(|(title, body)| format!("{}\n\n", context_block(title, body)))
+        .collect();
+    let parts = Message::from(prompt).parts;
+    if !parts.iter().any(|part| matches!(part, Part::Text(_))) {
+        context.truncate(context.trim_end().len());
+        return parts.into_iter().fold(Prompt::text(context), add_part);
+    }
+    let mut context = Some(context);
+    parts
+        .into_iter()
+        .fold(Prompt::new(), |prompt, part| match part {
+            Part::Text(text) => match context.take() {
+                Some(context) => prompt.with_text(context + &text),
+                None => prompt.with_text(text),
+            },
+            part => add_part(prompt, part),
+        })
+}
+
+/// Adds a part of a prompt, which has only text and media, to `prompt`.
+fn add_part(prompt: Prompt, part: Part) -> Prompt {
+    match part {
+        Part::Text(text) => prompt.with_text(text),
+        Part::Media(media) => prompt.with_media(media),
+        _ => prompt,
+    }
+}
+
 /// The messages of a turn that ended early, without the tool calls that got no result, as
 /// providers refuse a history with them.
 fn kept_messages(messages: &[Message]) -> Vec<Message> {
@@ -598,6 +683,29 @@ mod tests {
 
     fn assistant(parts: Vec<Part>) -> Message {
         Message::new(Role::Assistant, parts)
+    }
+
+    #[test]
+    fn context_goes_before_the_text() {
+        let blocks = [
+            ("A".to_owned(), "a".to_owned()),
+            ("B".to_owned(), "b".to_owned()),
+        ];
+        let prompt = with_context(Prompt::text("hi"), &blocks);
+        let expected = format!(
+            "{}\n\n{}\n\nhi",
+            context_block("A", "a"),
+            context_block("B", "b")
+        );
+        assert_eq!(prompt.parts(), [Part::Text(expected)]);
+
+        let image = Media::from_bytes("image/png", [1, 2, 3]);
+        let prompt = with_context(Prompt::new().with_media(image.clone()), &blocks[..1]);
+        assert_eq!(
+            prompt.parts(),
+            [Part::Text(context_block("A", "a")), Part::Media(image)]
+        );
+        assert_eq!(with_context(Prompt::text("hi"), &[]), Prompt::text("hi"));
     }
 
     #[test]

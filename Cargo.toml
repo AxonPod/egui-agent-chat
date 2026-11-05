@@ -1,6 +1,6 @@
 [package]
 name = "egui-agent-chat"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "An egui chat widget for agentai agents: streamed answers, reasoning and tool calls"
 license = "MIT OR Apache-2.0"

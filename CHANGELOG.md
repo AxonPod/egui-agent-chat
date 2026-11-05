@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.0
+
+### Breaking changes
+
+- `ContextBlock` has a new field, `hidden`.
+
+### New
+
+- Hidden context blocks: `context_block_hidden(title, body)` writes
+  `<context title="..." hidden>`, which the model gets and the chat does not draw. A user
+  message with only hidden blocks is not drawn at all.
+- Context for the next message: `ChatPanel::set_pending_context(blocks, label)` puts
+  `context_block`s before the text of the next message, whether the user writes it or the app
+  sends it with `send`, then empties the list. The optional label is shown dimmed over the
+  input while the context waits.
+
 ## 0.2.0
 
 ### Breaking changes

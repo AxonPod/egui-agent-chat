@@ -36,7 +36,7 @@ Key facts for integrating:
 ```toml
 [dependencies]
 agentai = "0.5"
-egui-agent-chat = "0.2"          # feature `tokio` is on by default
+egui-agent-chat = "0.3"          # feature `tokio` is on by default
 egui = "0.37"
 eframe = "0.37"                  # or any other egui integration
 tokio = { version = "1", features = ["rt-multi-thread"] }
@@ -103,6 +103,8 @@ fn main() -> anyhow::Result<()> {
 - `set_history(&mut self, Vec<agentai::Message>)`: restores a conversation. It stops a running
   turn and clears the input. Pass `Vec::new()` to start a new chat.
 - `set_input(&mut self, text: impl Into<String>)`: puts text into the input, e.g. a suggestion.
+- `set_pending_context(&mut self, blocks: Vec<(String, String)>, label: Option<String>)`:
+  context (title, body) for the next message, written or sent. See "Context blocks".
 - `set_send_shortcut(&mut self, SendShortcut)`: picks the key combination that sends. See
   "Input behavior".
 - `set_toolbar(&mut self, visible: bool)`: shows or hides the toolbar below the input, which
@@ -266,8 +268,27 @@ let prompt = format!("{}\n\nSummarize it.", egui_agent_chat::context_block("note
 chat.send(ui.ctx(), prompt);
 ```
 
-`split_context(text)` does the reverse: it returns the blocks (`ContextBlock { title, body }`)
-and the remaining text.
+`context_block_hidden(title, body)` writes `<context title="..." hidden>`: the model gets it,
+the chat never draws it. A user message holding only hidden blocks (no text, no images) is
+not drawn at all, e.g. for state your app sends the model on its own. Blocks are plain text
+in the user `Message`, so a history you save and restore keeps them for the model.
+
+`split_context(text)` does the reverse: it returns the blocks
+(`ContextBlock { title, body, hidden }`) and the remaining text.
+
+### Context for the user's next message
+
+The input calls `send` itself, so your code can't change what the user typed. Instead call
+`set_pending_context(blocks, label)` on any frame (it replaces what was set before; an empty
+`Vec` sets none). The next `send`, from the input or your code, puts each (title, body) as
+`context_block(title, body)` followed by a blank line before the prompt's text (before
+everything if it has only images), then empties the list. `ChatEvent::TurnStarted` is your
+sign that the context went. While it waits, `label` (e.g. `Some("Project changes will be sent
+with your message".into())`) is shown dimmed over the input. `set_history` keeps it.
+
+```rust
+chat.set_pending_context(vec![("Project changes".to_owned(), diff)], None);
+```
 
 ## Async runtimes
 

@@ -17,14 +17,16 @@ agents. Drop it into your app, give it your `Agent`, and get:
 - questions from the agent: a form in the chat with options (text or images) to pick, one or
   several, an "Other" field for the user's own answer, and Skip,
 - events for your app: a turn started, finished, was stopped or failed, a tool was called, a
-  question was answered.
+  question was answered,
+- context blocks: long material in a prompt shown collapsed under its title, or hidden, and
+  context your app adds to the user's next message.
 
 ## Quick start
 
 ```toml
 [dependencies]
 agentai = "0.5"
-egui-agent-chat = "0.2"
+egui-agent-chat = "0.3"
 ```
 
 The agent comes from your own `agentai` dependency; use 0.5, the version this crate uses.
@@ -53,14 +55,15 @@ For AI coding agents, [`llms.txt`](https://github.com/AxonPod/egui-agent-chat/bl
 
 ## Controlling the chat from code
 
-| Method                  | What it does                                              |
-| ----------------------- | --------------------------------------------------------- |
-| `send(ctx, prompt)`     | Sends a message: text or an `agentai::Prompt` with images |
-| `cancel()`              | Stops the answer being written                            |
-| `is_running()`          | Whether the agent is working on an answer                 |
-| `set_input(text)`       | Puts text into the input, e.g. a suggestion               |
-| `history()`             | The conversation, to save it                              |
-| `set_history(messages)` | Restores a conversation; an empty one starts a new chat   |
+| Method                               | What it does                                              |
+| ------------------------------------ | --------------------------------------------------------- |
+| `send(ctx, prompt)`                  | Sends a message: text or an `agentai::Prompt` with images |
+| `cancel()`                           | Stops the answer being written                            |
+| `is_running()`                       | Whether the agent is working on an answer                 |
+| `set_input(text)`                    | Puts text into the input, e.g. a suggestion               |
+| `history()`                          | The conversation, to save it                              |
+| `set_history(messages)`              | Restores a conversation; an empty one starts a new chat   |
+| `set_pending_context(blocks, label)` | Context that goes with the next message, see below        |
 
 ## Reacting to what happens in the chat
 
@@ -191,6 +194,37 @@ the chat. A question of a tool call goes away when its turn ends without an answ
 Stop; `dismiss_question(id)` removes one yourself. `examples/chat/ask.rs` is a complete
 `ask_user` tool.
 
+### How to add context to a message
+
+Wrap long material in `context_block(title, body)`: the model gets all of it, the chat shows it
+collapsed under `title`. `context_block_hidden(title, body)` makes a block the model gets and
+the chat never shows; a user message with nothing but hidden blocks is not drawn at all. The
+blocks are plain text in the user's message, so a saved and restored history keeps them.
+
+```rust
+use egui_agent_chat::{context_block, context_block_hidden};
+
+let prompt = format!(
+    "{}\n\n{}\n\nSummarize it.",
+    context_block("notes.md", &notes),
+    context_block_hidden("Open files", &open_files),
+);
+chat.send(ui.ctx(), prompt);
+```
+
+The input sends what the user writes by itself. To add context to it, e.g. what changed in
+the project since the last message, call `set_pending_context` on any frame. The next message,
+written or sent with `send`, starts with one `context_block` per (title, body), and the list
+is emptied; `ChatEvent::TurnStarted` tells you it went. The optional label is shown dimmed over
+the input while the context waits.
+
+```rust
+chat.set_pending_context(
+    vec![("Project changes".to_owned(), diff)],
+    Some("Project changes will be sent with your message".to_owned()),
+);
+```
+
 ## Async runtime
 
 Turns of the agent run as background tasks started through the `Spawn` trait:
@@ -241,7 +275,7 @@ Bump `version` in `Cargo.toml`, add its section to `CHANGELOG.md`, commit, then 
 matching tag:
 
 ```sh
-git tag v0.2.0 && git push origin v0.2.0
+git tag v0.3.0 && git push origin v0.3.0
 ```
 
 `.github/workflows/release.yml` runs CI, publishes to crates.io and creates a GitHub release.

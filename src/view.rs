@@ -1,6 +1,6 @@
 //! Drawing of the chat, straight from agentai messages.
 
-use crate::context::split_context;
+use crate::context::{is_visible, split_context};
 use crate::icons;
 use crate::media::MediaCache;
 use crate::question::Forms;
@@ -30,15 +30,17 @@ pub struct Caches {
 /// Space between the chat and the edges of its `Ui`.
 const MARGIN: i8 = 12;
 
-/// The input at the bottom: the attached images, the text field and, unless the toolbar is
-/// off, the toolbar with the host's widgets from `add_widgets` on the left and Send or Stop on
-/// the right.
+/// The input at the bottom: the label of the pending context, the attached images, the text
+/// field and, unless the toolbar is off, the toolbar with the host's widgets from `add_widgets`
+/// on the left and Send or Stop on the right.
+#[allow(clippy::too_many_arguments)]
 pub fn input(
     ui: &mut Ui,
     id: egui::Id,
     composer: &mut Composer,
     running: bool,
     settings: InputSettings,
+    pending_label: Option<&str>,
     cache: &mut Caches,
     add_widgets: impl FnOnce(&mut Toolbar<'_>),
 ) -> Option<InputAction> {
@@ -58,6 +60,9 @@ pub fn input(
             let mut send = focused && ui.input_mut(|i| settings.send_shortcut.consume(i));
             if settings.capabilities.images && ui.input(|i| !i.raw.hovered_files.is_empty()) {
                 ui.label(RichText::new(format!("{} Drop images to attach", icons::IMAGE)).weak());
+            }
+            if let Some(label) = pending_label {
+                ui.label(RichText::new(format!("{} {label}", icons::PAPERCLIP)).weak());
             }
             attachments(ui, &mut composer.attachments, &mut cache.media);
             ui.add(
@@ -279,15 +284,21 @@ fn show_messages(
     }
     let last = groups.len().saturating_sub(1);
     for (i, group) in groups.iter().enumerate() {
+        let note = notes.get(&group.last);
+        let bubble = group.speaker == Speaker::Agent || user_is_visible(group);
+        if !bubble && note.is_none() {
+            continue;
+        }
         ui.add_space(GROUP_SPACING);
         ui.push_id(i, |ui| {
             match group.speaker {
-                Speaker::User => show_user(ui, cache, group),
+                Speaker::User if bubble => show_user(ui, cache, group),
+                Speaker::User => {}
                 Speaker::Agent => {
                     show_agent(ui, cache, group, failed_tools, forms, running && i == last)
                 }
             }
-            if let Some(note) = notes.get(&group.last) {
+            if let Some(note) = note {
                 show_note(ui, note);
             }
         });
@@ -313,6 +324,20 @@ pub(crate) const GROUP_SPACING: f32 = 12.0;
 fn spinner(ui: &mut Ui) {
     let size = ui.text_style_height(&TextStyle::Body);
     ui.add(egui::Spinner::new().size(size));
+}
+
+/// Whether the user's message has anything to show: media, text or a context block that is not
+/// hidden.
+fn user_is_visible(group: &Group) -> bool {
+    group
+        .messages
+        .iter()
+        .flat_map(|m| &m.parts)
+        .any(|part| match part {
+            Part::Text(text) => is_visible(text),
+            Part::Media(_) => true,
+            _ => false,
+        })
 }
 
 /// The user's message: a bubble in the accent color, on the right.
@@ -393,7 +418,7 @@ fn user_text_width(ui: &Ui, group: &Group) -> f32 {
     for part in group.messages.iter().flat_map(|m| &m.parts) {
         let Part::Text(text) = part else { continue };
         let (contexts, rest) = split_context(text);
-        if !contexts.is_empty() {
+        if contexts.iter().any(|c| !c.hidden) {
             return f32::INFINITY;
         }
         let mut in_code = false;
@@ -466,10 +491,10 @@ fn show_agent(
     }
 }
 
-/// The user's text, plain, after its context blocks.
+/// The user's text, plain, after its context blocks that are not hidden.
 fn show_user_text(ui: &mut Ui, cache: &mut Caches, text: &str) {
     let (contexts, rest) = split_context(text);
-    for (i, context) in contexts.iter().enumerate() {
+    for (i, context) in contexts.iter().enumerate().filter(|(_, c)| !c.hidden) {
         egui::CollapsingHeader::new(
             RichText::new(format!("{} {}", icons::PAPERCLIP, context.title)).weak(),
         )

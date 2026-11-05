@@ -6,7 +6,8 @@ mod common;
 use egui::accesskit::Role;
 use egui::{Event, Key, KeyboardShortcut, Modifiers};
 use egui_agent_chat::{
-    Answer, ChatEvent, ChatPanel, Choice, Question, QuestionLayout, SendShortcut,
+    Answer, ChatEvent, ChatPanel, Choice, Question, QuestionLayout, SendShortcut, context_block,
+    context_block_hidden,
 };
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
@@ -497,4 +498,76 @@ fn an_image_can_be_shown_large() {
     // Enlarging does not choose
     assert!(submit_disabled(&harness));
     assert!(answered(&events.borrow()).is_empty());
+}
+
+/// The text of the first message in the history.
+fn first_text(chat: &ChatPanel) -> String {
+    match &chat.history()[0].parts[..] {
+        [agentai::Part::Text(text)] => text.clone(),
+        parts => panic!("not one text part: {parts:?}"),
+    }
+}
+
+#[test]
+fn pending_context_goes_with_the_next_message() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let label = "Project changes will be sent with your message";
+    let mut harness = harness(&runtime, |chat| {
+        chat.set_pending_context(
+            vec![("Project changes".into(), "main.rs: +1".into())],
+            Some(label.into()),
+        )
+    });
+    assert!(harness.query_by_label_contains(label).is_some());
+    harness.event(Event::Text("hi".into()));
+    harness.key_press(Key::Enter);
+    harness.step();
+    harness.state_mut().cancel();
+    harness.run();
+    assert!(harness.query_by_label_contains(label).is_none());
+    assert_eq!(
+        first_text(harness.state()),
+        format!("{}\n\nhi", context_block("Project changes", "main.rs: +1"))
+    );
+    // Shown collapsed under its title
+    assert!(harness.query_by_label_contains("Project changes").is_some());
+
+    // Sent once only
+    harness.state_mut().set_history(Vec::new());
+    let ctx = harness.ctx.clone();
+    harness.state_mut().send(&ctx, "again");
+    harness.state_mut().cancel();
+    assert_eq!(first_text(harness.state()), "again");
+}
+
+#[test]
+fn an_empty_pending_context_shows_no_label() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let harness = harness(&runtime, |chat| {
+        chat.set_pending_context(Vec::new(), Some("Changes will be sent".into()))
+    });
+    assert!(
+        harness
+            .query_by_label_contains("Changes will be sent")
+            .is_none()
+    );
+}
+
+#[test]
+fn hidden_context_is_not_drawn() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let harness = harness(&runtime, |chat| {
+        chat.set_history(vec![
+            agentai::Message::user(context_block_hidden("Secret state", "a = 1")),
+            agentai::Message::assistant("Noted."),
+            agentai::Message::user(format!(
+                "{}\n\nShown text",
+                context_block_hidden("Other state", "b = 2")
+            )),
+        ])
+    });
+    assert!(harness.query_by_label_contains("Noted.").is_some());
+    assert!(harness.query_by_label_contains("Shown text").is_some());
+    assert!(harness.query_by_label_contains("Secret state").is_none());
+    assert!(harness.query_by_label_contains("Other state").is_none());
 }
