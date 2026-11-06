@@ -527,10 +527,14 @@ fn pending_context_goes_with_the_next_message() {
     assert!(harness.query_by_label_contains(label).is_none());
     assert_eq!(
         first_text(harness.state()),
-        format!("{}\n\nhi", context_block("Project changes", "main.rs: +1"))
+        format!(
+            "{}\n\nhi",
+            context_block_hidden("Project changes", "main.rs: +1")
+        )
     );
-    // Shown collapsed under its title
-    assert!(harness.query_by_label_contains("Project changes").is_some());
+    // The model gets it, the user sees only what they wrote
+    assert!(harness.query_by_label_contains("hi").is_some());
+    assert!(harness.query_by_label_contains("Project changes").is_none());
 
     // Sent once only
     harness.state_mut().set_history(Vec::new());
@@ -561,13 +565,15 @@ fn hidden_context_is_not_drawn() {
             agentai::Message::user(context_block_hidden("Secret state", "a = 1")),
             agentai::Message::assistant("Noted."),
             agentai::Message::user(format!(
-                "{}\n\nShown text",
-                context_block_hidden("Other state", "b = 2")
+                "{}\n\n{}\n\nShown text",
+                context_block_hidden("Other state", "b = 2"),
+                context_block("Shown notes", "c")
             )),
         ])
     });
     assert!(harness.query_by_label_contains("Noted.").is_some());
     assert!(harness.query_by_label_contains("Shown text").is_some());
+    assert!(harness.query_by_label_contains("Shown notes").is_some());
     assert!(harness.query_by_label_contains("Secret state").is_none());
     assert!(harness.query_by_label_contains("Other state").is_none());
 }

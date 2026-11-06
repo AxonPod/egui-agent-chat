@@ -214,9 +214,10 @@ chat.send(ui.ctx(), prompt);
 
 The input sends what the user writes by itself. To add context to it, e.g. what changed in
 the project since the last message, call `set_pending_context` on any frame. The next message,
-written or sent with `send`, starts with one `context_block` per (title, body), and the list
-is emptied; `ChatEvent::TurnStarted` tells you it went. The optional label is shown dimmed over
-the input while the context waits.
+written or sent with `send`, starts with one `context_block_hidden` per (title, body), and the
+list is emptied: the model gets the context, the user's bubble shows only what they wrote.
+`ChatEvent::TurnStarted` tells you it went. The optional label is shown dimmed over the input
+while the context waits, so the user knows it will be sent.
 
 ```rust
 chat.set_pending_context(
@@ -275,7 +276,7 @@ Bump `version` in `Cargo.toml`, add its section to `CHANGELOG.md`, commit, then 
 matching tag:
 
 ```sh
-git tag v0.3.0 && git push origin v0.3.0
+git tag v0.3.1 && git push origin v0.3.1
 ```
 
 `.github/workflows/release.yml` runs CI, publishes to crates.io and creates a GitHub release.

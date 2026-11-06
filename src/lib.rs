@@ -140,8 +140,8 @@
 //! The input sends what the user writes by itself, so to add context to the user's next
 //! message, e.g. what changed in their project since the last one, give it to
 //! [`ChatPanel::set_pending_context`]. The next message, written or sent with
-//! [`ChatPanel::send`], starts with those blocks, and [`ChatEvent::TurnStarted`] tells you they
-//! went with it:
+//! [`ChatPanel::send`], starts with those blocks, hidden: the model gets them, the user sees
+//! only what they wrote. [`ChatEvent::TurnStarted`] tells you the blocks went with it:
 //!
 //! ```no_run
 //! # fn show(chat: &mut egui_agent_chat::ChatPanel, ui: &mut egui::Ui, diff: String) {
@@ -392,8 +392,10 @@ impl ChatPanel {
     }
 
     /// Sets the context that goes with the next message, whether the user writes it or you
-    /// [`send`](Self::send) it: each (title, body) becomes a [`context_block`] before the
-    /// message's text, followed by a blank line, and the list is then emptied. Call it on any
+    /// [`send`](Self::send) it: each (title, body) becomes a [`context_block_hidden`] before
+    /// the message's text, followed by a blank line, and the list is then emptied. The model
+    /// gets the blocks; the chat does not show them, so the user's bubble holds only what they
+    /// wrote, and a message of only pending context is not drawn at all. Call it on any
     /// frame; it replaces the context set before, and an empty list sets none.
     /// [`ChatEvent::TurnStarted`] tells you the context went with a message.
     ///
@@ -606,7 +608,7 @@ impl ChatPanel {
     }
 }
 
-/// `prompt` with the context `blocks` (title, body) before its text, or before everything when
+/// `prompt` with the hidden context `blocks` (title, body) before its text, or before everything when
 /// it has no text.
 fn with_context(prompt: Prompt, blocks: &[(String, String)]) -> Prompt {
     if blocks.is_empty() {
@@ -614,7 +616,7 @@ fn with_context(prompt: Prompt, blocks: &[(String, String)]) -> Prompt {
     }
     let mut context: String = blocks
         .iter()
-        .map(|(title, body)| format!("{}\n\n", context_block(title, body)))
+        .map(|(title, body)| format!("{}\n\n", context_block_hidden(title, body)))
         .collect();
     let parts = Message::from(prompt).parts;
     if !parts.iter().any(|part| matches!(part, Part::Text(_))) {
@@ -694,8 +696,8 @@ mod tests {
         let prompt = with_context(Prompt::text("hi"), &blocks);
         let expected = format!(
             "{}\n\n{}\n\nhi",
-            context_block("A", "a"),
-            context_block("B", "b")
+            context_block_hidden("A", "a"),
+            context_block_hidden("B", "b")
         );
         assert_eq!(prompt.parts(), [Part::Text(expected)]);
 
@@ -703,7 +705,10 @@ mod tests {
         let prompt = with_context(Prompt::new().with_media(image.clone()), &blocks[..1]);
         assert_eq!(
             prompt.parts(),
-            [Part::Text(context_block("A", "a")), Part::Media(image)]
+            [
+                Part::Text(context_block_hidden("A", "a")),
+                Part::Media(image)
+            ]
         );
         assert_eq!(with_context(Prompt::text("hi"), &[]), Prompt::text("hi"));
     }

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.1
+
+### Fixed
+
+- Pending context (`ChatPanel::set_pending_context`) is sent as hidden blocks
+  (`context_block_hidden`), as intended: the model gets it, and the user's bubble shows only
+  what they wrote. In 0.3.0 it was shown collapsed in the bubble.
+
 ## 0.3.0
 
 ### Breaking changes

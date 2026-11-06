@@ -281,8 +281,9 @@ in the user `Message`, so a history you save and restore keeps them for the mode
 The input calls `send` itself, so your code can't change what the user typed. Instead call
 `set_pending_context(blocks, label)` on any frame (it replaces what was set before; an empty
 `Vec` sets none). The next `send`, from the input or your code, puts each (title, body) as
-`context_block(title, body)` followed by a blank line before the prompt's text (before
-everything if it has only images), then empties the list. `ChatEvent::TurnStarted` is your
+`context_block_hidden(title, body)` followed by a blank line before the prompt's text (before
+everything if it has only images), then empties the list. The model gets the blocks; the chat
+does not draw them, so the user's bubble shows only what they typed. `ChatEvent::TurnStarted` is your
 sign that the context went. While it waits, `label` (e.g. `Some("Project changes will be sent
 with your message".into())`) is shown dimmed over the input. `set_history` keeps it.
 
