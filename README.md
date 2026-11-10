@@ -25,11 +25,11 @@ agents. Drop it into your app, give it your `Agent`, and get:
 
 ```toml
 [dependencies]
-agentai = "0.5"
-egui-agent-chat = "0.3"
+agentai = "0.6"
+egui-agent-chat = "0.4"
 ```
 
-The agent comes from your own `agentai` dependency; use 0.5, the version this crate uses.
+The agent comes from your own `agentai` dependency; use 0.6, the version this crate uses.
 The chat builds agentai without its default features, so the TLS backend is yours to choose:
 agentai's defaults give you rustls with ring, and with `default-features = false` you need to
 turn on one of its TLS features (`rustls-ring`, `rustls-aws-lc` or `native-tls`), or HTTPS
@@ -276,7 +276,7 @@ Bump `version` in `Cargo.toml`, add its section to `CHANGELOG.md`, commit, then 
 matching tag:
 
 ```sh
-git tag v0.3.1 && git push origin v0.3.1
+git tag v0.4.0 && git push origin v0.4.0
 ```
 
 `.github/workflows/release.yml` runs CI, publishes to crates.io and creates a GitHub release.

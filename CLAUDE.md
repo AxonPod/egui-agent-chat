@@ -112,7 +112,7 @@ Releases: bump `version` in `Cargo.toml`, add its section to `CHANGELOG.md` and 
   app's own `agentai` dependency does. The dev-dependencies turn on `rustls-ring` (and
   `macros`, `tools-buildin`, `system-proxy`) for the tests and the example.
 - `agentai` is not re-exported: users depend on it themselves, from the same minor line
-  (currently 0.5). When agentai changes, follow its `MIGRATION.md`, which is in the GitHub repo
+  (currently 0.6). When agentai changes, follow its `MIGRATION.md`, which is in the GitHub repo
   `AdamStrojek/rust-agentai`, not in the published crate.
 - agentai and genai come from crates.io. To work against local checkouts, patch them in a local
   `.cargo/config.toml`, not in `Cargo.toml`.

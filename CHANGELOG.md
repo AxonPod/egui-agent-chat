@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0
+
+### Breaking changes
+
+- Uses agentai 0.6. The agent and the history are agentai types, so depend on `agentai = "0.6"`
+  yourself. agentai 0.6 needs no changes in code that worked with 0.5.
+
 ## 0.3.1
 
 ### Fixed

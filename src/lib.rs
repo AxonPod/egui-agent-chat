@@ -11,7 +11,7 @@
 //!
 //! # Usage
 //!
-//! Build your agent with your own `agentai` dependency (0.5, the version this crate uses), then create the panel once with the agent and a [`Spawn`] that runs it on your async
+//! Build your agent with your own `agentai` dependency (0.6, the version this crate uses), then create the panel once with the agent and a [`Spawn`] that runs it on your async
 //! runtime, and call [`ChatPanel::ui`] every frame. With eframe and tokio:
 //!
 //! ```no_run

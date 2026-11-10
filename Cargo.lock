@@ -134,9 +134,9 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agentai"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8e39b3165b848bd1ccd4d7d8fbf13edc5e1ca86b46fbdba981bef8ddb8b9acc"
+checksum = "106de274a00d8c81b520408c801a4e63df666005fed3169b86251caa68949387"
 dependencies = [
  "agentai-core",
  "agentai-macros",
@@ -158,9 +158,9 @@ dependencies = [
 
 [[package]]
 name = "agentai-core"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13f14af320ad240a69f964ff0bb6e58671c3dddb3b7ff66b698af6d4cbebbb1a"
+checksum = "7611d74a7a9d99510ec5e8ffa35abbf75755400535676ac2174b1fb3eb6829bc"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -174,9 +174,9 @@ dependencies = [
 
 [[package]]
 name = "agentai-macros"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00795547b385997f76b86884e203058ce20df66bf101dc7940d35154b951fdf1"
+checksum = "0db2a4c56d61a864e5278a4222f718eeb08a8e7afbbe769269e8fd86ff2e61ab"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -1258,7 +1258,7 @@ dependencies = [
 
 [[package]]
 name = "egui-agent-chat"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "agentai",
  "anyhow",
