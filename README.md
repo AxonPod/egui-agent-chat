@@ -5,7 +5,7 @@
      align="right" width="25%">
 
 An [egui](https://github.com/emilk/egui) chat widget for [agentai](https://crates.io/crates/agentai)
-agents. Drop it into your app, give it your `Agent`, and get:
+agents. Drop it into your app, show your agent's runs in it, and get:
 
 - answers streamed in as they are written, rendered as Markdown,
 - collapsible reasoning ("Thinking") and tool calls with their arguments and results,
@@ -16,8 +16,9 @@ agents. Drop it into your app, give it your `Agent`, and get:
 - the conversation as a plain `Vec<agentai::Message>`, easy to save and restore,
 - questions from the agent: a form in the chat with options (text or images) to pick, one or
   several, an "Other" field for the user's own answer, and Skip,
-- events for your app: a turn started, finished, was stopped or failed, a tool was called, a
-  question was answered,
+- actions for your app: the person sent a message, pressed Stop or answered a question,
+- a view, not a driver: your app owns the agent and its loop, so a turn runs whether or not the
+  chat is drawn, and one conversation can be shown in several panels, or also in a CLI,
 - context blocks: long material in a prompt shown collapsed under its title, or hidden, and
   context your app adds to the user's next message.
 
@@ -37,56 +38,87 @@ requests fail.
 
 ```rust
 use agentai::Agent;
-use egui_agent_chat::ChatPanel;
+use egui_agent_chat::{ChatPanel, Driver};
 
 // Once, e.g. when your app starts
 // agentai picks the provider from the model name and reads its key, e.g. OPENAI_API_KEY
 let agent = Agent::new("gpt-4.1-mini", "You are helpful.")?;
-let runtime = tokio::runtime::Runtime::new()?; // keep it alive as long as the chat
-let mut chat = ChatPanel::new(runtime.handle().clone(), agent);
+let runtime = tokio::runtime::Runtime::new()?; // keep it alive as long as the driver
+let mut driver = Driver::new(runtime.handle().clone(), agent);
+let chat = ChatPanel::new();
+let ctx = cc.egui_ctx.clone(); // eframe's CreationContext
+driver.add_sink(chat.sink(move || ctx.request_repaint()));
 
 // Every frame, in any egui::Ui
-chat.ui(ui);
+for action in chat.ui(ui) {
+    driver.handle(&action);
+}
 ```
 
 The chat fills the `Ui` it gets; put it in a side panel or a window to share the screen.
 
 For AI coding agents, [`llms.txt`](https://github.com/AxonPod/egui-agent-chat/blob/master/llms.txt) describes the whole integration in one file.
 
-## Controlling the chat from code
+## The panel, the sink and the driver
 
-| Method                               | What it does                                              |
-| ------------------------------------ | --------------------------------------------------------- |
-| `send(ctx, prompt)`                  | Sends a message: text or an `agentai::Prompt` with images |
-| `cancel()`                           | Stops the answer being written                            |
-| `is_running()`                       | Whether the agent is working on an answer                 |
-| `set_input(text)`                    | Puts text into the input, e.g. a suggestion               |
-| `history()`                          | The conversation, to save it                              |
-| `set_history(messages)`              | Restores a conversation; an empty one starts a new chat   |
-| `set_pending_context(blocks, label)` | Context that goes with the next message, see below        |
+The `ChatPanel` holds no agent and starts nothing. It shows what a `ChatSink` tells it, and
+`ui` returns what the person did, as `ChatAction`s:
 
-## Reacting to what happens in the chat
+| Action                            | Meaning                                                  |
+| --------------------------------- | -------------------------------------------------------- |
+| `Send(prompt)`                    | A message: its text, attachments and the pending context |
+| `Stop`                            | Stop pressed on the running turn                         |
+| `QuestionAnswered { id, answer }` | The answer to a question you asked, see below            |
 
-`ui` returns the `ChatEvent`s of the frame, in order: `TurnStarted`, `ToolCalled`,
-`ToolFinished`, then `TurnFinished`, `TurnStopped` or `TurnFailed { error }`. A stopped or
-failed turn stays in the history with what the agent wrote so far. `QuestionAnswered` brings
-the user's answer to a question you asked, see below.
+`Driver` (feature `driver`, on by default) is the ready-made loop: it owns the agent, the
+history and the one running turn, runs a turn for `Send`, aborts it for `Stop`, and shows
+every turn in the panels whose sinks you gave it. Its turns do not wait for any panel.
+
+| `Driver` method           | What it does                                         |
+| ------------------------- | ---------------------------------------------------- |
+| `handle(&action)`         | `Send` starts a turn, `Stop` stops it                |
+| `send(prompt)` / `stop()` | The same from code                                   |
+| `is_running()`            | Whether a turn is running                            |
+| `history()`               | The conversation, to save it, also with no panel     |
+| `set_history(messages)`   | Restores a conversation in the driver and its panels |
+| `add_sink(sink)`          | Shows the turns from now on in another panel         |
+
+| `ChatPanel` method                    | What it does                                                 |
+| ------------------------------------- | ------------------------------------------------------------ |
+| `sink(wake)`                          | A `ChatSink` for this panel; `wake` repaints                 |
+| `history()` / `set_history(messages)` | What the panel shows; a new panel can start from any history |
+| `is_running()`                        | Whether the panel shows a running turn                       |
+| `set_input(text)`                     | Puts text into the input, e.g. a suggestion                  |
+| `set_pending_context(blocks, label)`  | Context that goes with the next message, see below           |
+| `with_pending_context(prompt)`        | That context added to a prompt you send from code            |
+
+A stopped or failed turn stays in the history with what the agent wrote so far, marked in the
+chat. To save the history, read `driver.history()` when `is_running()` turns false.
+
+### Your own loop
+
+Without the driver, run the agent on your runtime and listen with the sink, an agentai
+`EventListener`. Tell it what agentai's events do not carry: `turn_started(&prompt)`,
+`turn_failed(error)`, `turn_stopped()`. `sendable(history)` drops the messages providers
+refuse, `with_final_reasoning(&result)` keeps the reasoning of the final answer:
 
 ```rust
-use egui_agent_chat::ChatEvent;
+use egui_agent_chat::{sendable, with_final_reasoning};
 
-for event in chat.ui(ui) {
-    match event {
-        // The history has grown: a good moment to save it
-        ChatEvent::TurnFinished | ChatEvent::TurnStopped => save(chat.history()),
-        ChatEvent::TurnFailed { error } => {
-            eprintln!("the turn failed: {error}");
-            save(chat.history());
-        }
-        _ => {}
-    }
+sink.turn_started(&prompt);
+let history_in = sendable(&history);
+let run = async {
+    agent.run_stream::<String>(prompt).with_history(&history_in).await?
+        .listen(sink.clone()).await
+};
+match run.await {
+    Ok(result) => history.extend(with_final_reasoning(&result)),
+    Err(error) => sink.turn_failed(&error),
 }
 ```
+
+The sink is `Clone + Send`: it can go into the agent's task, into your tools (`sink.ask`), or
+be one of several, one per panel.
 
 ## Customizing behavior
 
@@ -157,17 +189,17 @@ chat.ui_with_toolbar(ui, |toolbar| {
 chat.set_toolbar(false);
 ```
 
-Messages are then sent with the shortcut only, and an answer can be stopped only with
-`chat.cancel()`, so give users another way to stop it, e.g. a menu item.
+Messages are then sent with the shortcut only, and an answer can be stopped only by your app,
+e.g. `driver.stop()` from a menu item.
 
 ### How to let the agent ask the user
 
-`chat.ask(question)` shows a form in the chat: the question, its choices as radio buttons (or
+`chat.ask(question)` (or `sink.ask(question)`, from any thread) shows a form in the chat: the question, its choices as radio buttons (or
 checkboxes with `with_multiple(true)`), optionally an "Other" choice below them with a multi-line text field (`with_other`, with
 `with_other_hint` for a hint in it; writing in it chooses it), and Submit and Skip
 (`with_declinable_label("None of them")` renames it, `with_declinable(false)` hides it). A
 choice is text (`Choice::text`) or a picture (`Choice::image`, needs image loaders), shown up to
-160×160 points or `with_image_size(..)`, with a button that shows it large. The answer comes back as `ChatEvent::QuestionAnswered { id, answer }`, with the ids
+160×160 points or `with_image_size(..)`, with a button that shows it large. The answer comes back as `ChatAction::QuestionAnswered { id, answer }`, with the ids
 of the chosen choices and the Other text, or `Answer::Declined`.
 
 ```rust
@@ -186,9 +218,9 @@ chat.ask(
 
 The chat only shows the question and reports the answer; what the agent gets back is up to
 you. Usually a tool of yours asks: it gets the `ToolCall` (with `id`) in agentai's
-`call_tool`, sends the `Question` with that id to your app (e.g. over a channel), and awaits
-the answer. Your app calls `chat.ask` and, on `QuestionAnswered`, sends the answer back to the
-tool, which turns it into the tool's result. With the call's id, the form is drawn under that
+`call_tool`, shows the `Question` with that id through the panel's sink (`sink.ask`), and
+awaits the answer. Your app, on `QuestionAnswered`, sends the answer back to the tool (e.g.
+over a oneshot channel), which turns it into the tool's result. With the call's id, the form is drawn under that
 call and, once answered, shows the answer there; a question with another id goes at the end of
 the chat. A question of a tool call goes away when its turn ends without an answer, e.g. on
 Stop; `dismiss_question(id)` removes one yourself. `examples/chat/ask.rs` is a complete
@@ -209,14 +241,14 @@ let prompt = format!(
     context_block("notes.md", &notes),
     context_block_hidden("Open files", &open_files),
 );
-chat.send(ui.ctx(), prompt);
+driver.send(prompt);
 ```
 
 The input sends what the user writes by itself. To add context to it, e.g. what changed in
-the project since the last message, call `set_pending_context` on any frame. The next message,
-written or sent with `send`, starts with one `context_block_hidden` per (title, body), and the
-list is emptied: the model gets the context, the user's bubble shows only what they wrote.
-`ChatEvent::TurnStarted` tells you it went. The optional label is shown dimmed over the input
+the project since the last message, call `set_pending_context` on any frame. The prompt of the
+next `ChatAction::Send` starts with one `context_block_hidden` per (title, body), and the list
+is emptied: the model gets the context, the user's bubble shows only what they wrote. For a
+message you send from code, `chat.with_pending_context(prompt)` adds it. The optional label is shown dimmed over the input
 while the context waits, so the user knows it will be sent.
 
 ```rust
@@ -228,7 +260,7 @@ chat.set_pending_context(
 
 ## Async runtime
 
-Turns of the agent run as background tasks started through the `Spawn` trait:
+The `Driver` runs turns of the agent as background tasks started through the `Spawn` trait:
 
 | Feature           | Implementation                               |
 | ----------------- | -------------------------------------------- |
@@ -260,9 +292,18 @@ Variables already set in your shell win over `.env`. The menu also switches the 
 shortcut, the toolbar and image support. The agent has an `ask_user` tool (`ask.rs`): ask it to
 let you choose something.
 
+Two smaller examples use the same variables: `headless` runs a turn before any chat exists,
+then opens a window with a panel made from the history; `two_panels` shows one conversation in
+two panels through two sinks.
+
+```sh
+cargo run --example headless
+cargo run --example two_panels
+```
+
 ## Tests
 
-`cargo test` runs the offline tests. `tests/agent.rs` drives the chat against a real model
+`cargo test` runs the offline tests. `tests/agent.rs` drives the `Driver` against a real model
 (answer, tool call, stop, an image in the prompt, smol) with the same environment variables as
 the example. The image test needs a vision model.
 

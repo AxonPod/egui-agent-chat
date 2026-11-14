@@ -39,33 +39,44 @@ Releases: bump `version` in `Cargo.toml`, add its section to `CHANGELOG.md` and 
 
 ## Architecture
 
-- **`ChatPanel` (`src/lib.rs`)** owns everything: the history (`Vec<agentai::Message>`), the
-  running `Turn`, the message being written (`Composer`: text and attachments), the input
-  settings (send shortcut, toolbar, `ModelCapabilities`) and `SessionMarks`. `ChatPanel::ui`
-  returns the frame's `ChatEvent`s (`src/event.rs`), queued in `ChatPanel::events` by `send`,
-  `poll` and `cancel`. The host also reads `history()`/`is_running()` and calls
-  `send`/`cancel`/setters. There is exactly one way to start a turn: `send(ctx, impl IntoPrompt)`.
-  The input uses it too.
+- **`ChatPanel` (`src/lib.rs`) is a view, not the agent's driver.** It holds no agent and
+  starts nothing. It owns what it shows: the history (`Vec<agentai::Message>`), the running
+  `Turn` (messages only), the message being written (`Composer`: text and attachments), the
+  input settings (send shortcut, toolbar, `ModelCapabilities`) and `SessionMarks`.
+  `ChatPanel::ui` returns `ChatAction`s (`src/action.rs`): what the person did (`Send(Prompt)`
+  with the pending context applied, `Stop`, `QuestionAnswered`), never what the agent did.
+- **`ChatSink` (`src/sink.rs`)**, made by `ChatPanel::sink(wake)`, is an agentai
+  `EventListener` plus `turn_started`/`turn_failed`/`turn_stopped`/`ask`/`dismiss_question`/
+  `set_history`. It sends `Update`s over a `std::sync::mpsc` channel and calls `wake`; the panel
+  drains them at the start of `ui` (`take_updates`/`apply`). Draining is display only: nothing
+  of a run waits for it. Deltas without a running turn start one (a sink attached mid-run).
+  `sink::record` accumulates deltas into `Message`s (shared with the driver).
 - **The view is built straight from agentai types.** There is no separate view model.
   `src/view.rs` groups `Message`s into bubbles: a user message, then all the assistant and tool
   messages that follow it. It pairs `ToolResponse` with `ToolCall` by `call_id`, and draws
   reasoning parts before the rest of each message, because agentai stores them after the tool
   calls. A running turn accumulates its streamed deltas into `Message`s too (see `ChatPanel::poll`
   and `reply()`).
-- **Turns (`src/run.rs`)** run as a background task. They pass `Update`s to the UI thread through
-  a `std::sync::mpsc` channel and call `ctx.request_repaint()`. The task is wrapped in
-  `futures_util::future::abortable`, and dropping `RunningTurn` aborts it, so cancelling works
-  without any runtime API. `Finished` appends agentai's `new_messages` to the history. It also
-  works around agentai keeping the final answer's reasoning only in `reasoning_content`.
-- **Ending a turn early (`ChatPanel::keep`, `kept_messages`)**: on Stop, an error or a new
-  `send`, the turn always goes into the history as it is (the prompt, reasoning, text, answered
-  tool calls); the history never rolls back and the prompt never goes back to the composer.
-  Only tool calls without a result are dropped, because providers reject them. A `Note` keyed by
-  the index of the turn's last message marks it in the chat. `run::sendable` leaves out of the
-  history sent to the agent the assistant messages with only reasoning (unsigned, so e.g.
-  Anthropic would get an empty message). Things the history cannot hold (`Note`s, failed tool
+- **`Driver` (`src/driver.rs`, feature `driver`)** owns the `Arc<Agent>`, the history, the one
+  running turn and the sinks, all in an `Arc<Mutex<State>>` shared with the turn's task. The
+  task is wrapped in `futures_util::future::abortable`, so stopping works without any runtime
+  API. Its listener (`Forward`) records each event, forwards it to the sinks and, on
+  `Finished`, commits the messages to the history under the same lock, so `stop` racing a
+  finish is safe; a listener of a turn that is no longer current ends its run. No public item
+  outside this feature names `Agent`.
+- **History fixes (`src/history.rs`)**: `sendable` drops assistant messages with only reasoning
+  (unsigned, so e.g. Anthropic would get an empty message); `with_final_reasoning` works around
+  agentai keeping the final answer's reasoning only in `reasoning_content`. `RunEvent::Finished`
+  has no `reasoning_content`, so the panel and the driver use the streamed reasoning instead
+  (`sink::finished_messages`).
+- **Ending a turn early (`ChatPanel::keep`, `sink::kept_messages`)**: on `turn_stopped`,
+  `turn_failed` or a new `turn_started`, the turn always goes into the history as it is (the
+  prompt, reasoning, text, answered tool calls), in the panel and in the driver; the history
+  never rolls back and the prompt never goes back to the composer. Only tool calls without a
+  result are dropped, because providers reject them. A `Note` keyed by the index of the turn's
+  last message marks it in the chat. Things the history cannot hold (`Note`s, failed tool
   calls) live in `SessionMarks` and are lost on `set_history`.
-- **Runtime independence (`src/spawn.rs`)**: the `Spawn` trait takes a boxed future. It is
+- **Runtime independence (`src/spawn.rs`, feature `driver`)**: the `Spawn` trait takes a boxed future. It is
   implemented for `tokio::runtime::Handle` (feature `tokio`, default), for `SmolGlobal` and
   `Arc<smol::Executor>` (feature `smol`), and for any `Fn(Task)` closure. agentai's HTTP client
   needs a tokio reactor, so the smol implementations wrap tasks in `async_compat::Compat`.
@@ -73,11 +84,11 @@ Releases: bump `version` in `Cargo.toml`, add its section to `CHANGELOG.md` and 
   files (`take_dropped_images`, native only) and `attach`/`Toolbar::attach` go through
   `Composer::attach`, which checks the capability. `src/media.rs` decodes base64 `Media` once into
   a cache and gives egui a `bytes://` URI. Drawing images needs the host to install image loaders.
-- **Questions (`src/question.rs`)**: `ChatPanel::ask` adds a `Pending` question (with its form
+- **Questions (`src/question.rs`)**: `ChatPanel::ask` (or `ChatSink::ask`) adds a `Pending` question (with its form
   state) to `ChatPanel::questions`; `view::show_tool` draws, through `question::Forms`, the form
   or the answered summary whose id is the call's id, and `Forms::show_rest` the pending ones
   that no call showed, at the end. Answers given in the frame become
-  `ChatEvent::QuestionAnswered` and move to `SessionMarks::answers` (lost on `set_history`).
+  `ChatAction::QuestionAnswered` and move to `SessionMarks::answers` (lost on `set_history`).
   Pending questions of a turn's tool calls are dropped when the turn ends (`drop_questions`).
   The tool that asks and answers the agent is the host's (see `examples/chat/ask.rs`).
 - **Toolbar extension**: `ui_with_toolbar(ui, |toolbar| ..)` runs the host's closure each frame
@@ -92,14 +103,15 @@ Releases: bump `version` in `Cargo.toml`, add its section to `CHANGELOG.md` and 
 ## Tests
 
 - `tests/input.rs` drives the real widget with `egui_kittest`: typing, shortcuts, toolbar
-  widgets, attachments. The agent points at a local TCP listener that never answers, so a sent
-  message stays running. Query widgets by their accessibility labels; icon-only buttons need an
+  widgets, attachments. No agent: a test `Host` answers `Send` with `sink.turn_started` and
+  `Stop` with `turn_stopped`, so a sent message stays running (it shows after one more frame,
+  `send_steps`). Query widgets by their accessibility labels; icon-only buttons need an
   explicit `widget_info` label (e.g. "Remove").
 - `tests/turns.rs` runs a fake OpenAI-compatible SSE server (`tests/common/mod.rs` builds the
   agent with `Agent::from_client`). It streams text, calls a tool, or answers with an HTTP
   error, one `Reply` per request in order. It builds the `genai::Client` by hand, so it calls
   `agentai::tls::install_crypto_provider()` first (agentai's `rustls-ring` panics otherwise). Use it for deterministic tests of streaming, tools,
-  events and ending a turn early.
+  the driver, sinks and ending a turn early.
 - `tests/agent.rs` is `#[ignore]`d and talks to a real model (text, tools, images, smol).
 - kittest panics on glyphs no installed font has, e.g. egui's ⚠ shown for an image that failed
   to load. Use real images with loaders installed, or `.allow_missing_glyphs()`.
@@ -116,5 +128,5 @@ Releases: bump `version` in `Cargo.toml`, add its section to `CHANGELOG.md` and 
   `AdamStrojek/rust-agentai`, not in the published crate.
 - agentai and genai come from crates.io. To work against local checkouts, patch them in a local
   `.cargo/config.toml`, not in `Cargo.toml`.
-- Keep the public API small: prefer a setter on `ChatPanel`, or a new `ChatEvent` variant, over
-  new callback mechanisms. Every public item needs docs (`#![warn(missing_docs)]`).
+- Keep the public API small: prefer a setter on `ChatPanel`, a method on `ChatSink`, or a new
+  `ChatAction` variant, over new callback mechanisms. Every public item needs docs (`#![warn(missing_docs)]`).

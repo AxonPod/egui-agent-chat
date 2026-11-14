@@ -1,20 +1,20 @@
-//! The intermediary between the `ask_user` tool and the chat: the tool sends its question to
-//! the app, which shows it with `ChatPanel::ask` and sends the user's answer back.
+//! The `ask_user` tool: it shows its question in the chat through the panel's sink and waits
+//! for the answer, which the app passes back from `ChatAction::QuestionAnswered`.
 
 use agentai::ToolCall;
 use agentai::tool::{Tool, ToolBox, ToolError, ToolResult, toolbox};
-use egui_agent_chat::{Answer, ChatEvent, ChatPanel, Choice, Question};
+use egui_agent_chat::{Answer, ChatAction, ChatSink, Choice, Question};
 use futures_channel::oneshot;
 use std::collections::HashMap;
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 
-type Asked = (Question, oneshot::Sender<Answer>);
+/// The tools waiting for an answer, by the id of their question.
+type Waiting = Arc<Mutex<HashMap<String, oneshot::Sender<Answer>>>>;
 
 /// The tool. It runs in the agent's task, away from the UI thread.
 pub struct AskUser {
-    questions: mpsc::Sender<Asked>,
-    /// Woken when a question comes, so the app picks it up.
-    ctx: egui::Context,
+    sink: ChatSink,
+    waiting: Waiting,
 }
 
 #[toolbox]
@@ -46,10 +46,8 @@ impl AskUser {
             question = question.with_other(other);
         }
         let (answer, answered) = oneshot::channel();
-        self.questions
-            .send((question, answer))
-            .map_err(|_| ToolError::Failed("the chat is closed".into()))?;
-        self.ctx.request_repaint();
+        self.waiting.lock().unwrap().insert(call.id.clone(), answer);
+        self.sink.ask(question);
         let answer = answered
             .await
             .map_err(|_| ToolError::Failed("the question was dismissed".into()))?;
@@ -68,46 +66,31 @@ impl AskUser {
     }
 }
 
-/// The app's side: the questions the tool sent, and where their answers go.
-pub struct Questions {
-    asked: mpsc::Receiver<Asked>,
-    waiting: HashMap<String, oneshot::Sender<Answer>>,
+/// The app's side: where the answers go.
+pub struct Answers {
+    waiting: Waiting,
 }
 
-/// The tool and the app's side of it.
-pub fn channel(ctx: egui::Context) -> (AskUser, Questions) {
-    let (sender, asked) = mpsc::channel();
-    let questions = Questions {
-        asked,
-        waiting: HashMap::new(),
+/// The tool, which asks in the panel of `sink`, and the app's side of it.
+pub fn tool(sink: ChatSink) -> (AskUser, Answers) {
+    let waiting = Waiting::default();
+    let answers = Answers {
+        waiting: waiting.clone(),
     };
-    (
-        AskUser {
-            questions: sender,
-            ctx,
-        },
-        questions,
-    )
+    (AskUser { sink, waiting }, answers)
 }
 
-impl Questions {
-    /// Shows the questions the tool sent since the last frame. Call it before `ChatPanel::ui`.
-    pub fn show(&mut self, chat: &mut ChatPanel) {
-        for (question, answer) in self.asked.try_iter() {
-            self.waiting.insert(question.id.clone(), answer);
-            chat.ask(question);
-        }
-    }
-
-    /// Sends the answer in `event`, if it is one, to the tool that waits for it.
-    pub fn answer(&mut self, event: &ChatEvent) {
-        if let ChatEvent::QuestionAnswered { id, answer } = event
-            && let Some(waiting) = self.waiting.remove(id)
+impl Answers {
+    /// Sends the answer in `action`, if it is one, to the tool that waits for it.
+    pub fn answer(&self, action: &ChatAction) {
+        let mut waiting = self.waiting.lock().unwrap();
+        if let ChatAction::QuestionAnswered { id, answer } = action
+            && let Some(tool) = waiting.remove(id)
         {
             // The tool is gone if the turn was stopped
-            let _ = waiting.send(answer.clone());
+            let _ = tool.send(answer.clone());
         }
         // Forget the questions of stopped turns, whose tools no longer wait
-        self.waiting.retain(|_, waiting| !waiting.is_canceled());
+        waiting.retain(|_, tool| !tool.is_canceled());
     }
 }

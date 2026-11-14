@@ -1,4 +1,4 @@
-//! Runs the chat against a real model, without a window. Needs `AGENTAI_MODEL` and whatever
+//! Runs the driver against a real model, without a window. Needs `AGENTAI_MODEL` and whatever
 //! its provider needs, e.g. an API key (a `.env` file works):
 //!
 //! ```sh
@@ -8,36 +8,24 @@
 
 use agentai::tool::{Tool, ToolBox, ToolError, ToolResult, toolbox};
 use agentai::{Agent, Part, Role};
-use egui_agent_chat::{ChatPanel, Spawn};
+use egui_agent_chat::{Driver, Spawn};
 use std::time::{Duration, Instant};
 
-fn chat(runtime: &tokio::runtime::Runtime) -> ChatPanel {
+fn chat(runtime: &tokio::runtime::Runtime) -> Driver {
     chat_with(runtime.handle().clone(), |agent| agent)
 }
 
-fn chat_with(spawner: impl Spawn, setup: impl FnOnce(Agent) -> Agent) -> ChatPanel {
+fn chat_with(spawner: impl Spawn, setup: impl FnOnce(Agent) -> Agent) -> Driver {
     dotenvy::dotenv().ok();
     let model = std::env::var("AGENTAI_MODEL").expect("AGENTAI_MODEL is not set");
     let agent = Agent::new(&model, "You are a terse assistant.").unwrap();
-    ChatPanel::new(spawner, setup(agent))
+    Driver::new(spawner, setup(agent))
 }
 
-/// Draws one frame, discarding its output.
-fn frame(ctx: &egui::Context, chat: &mut ChatPanel) {
-    let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-        chat.ui(ui);
-    });
-    output.textures_delta.clear();
-}
-
-/// Draws frames until the turn ends.
-fn run_until_done(ctx: &egui::Context, chat: &mut ChatPanel) {
+/// Waits until the turn ends; no panel is needed for it.
+fn run_until_done(chat: &Driver) {
     let start = Instant::now();
-    loop {
-        frame(ctx, chat);
-        if !chat.is_running() {
-            return;
-        }
+    while chat.is_running() {
         assert!(
             start.elapsed() < Duration::from_secs(300),
             "no answer in time"
@@ -51,10 +39,9 @@ fn run_until_done(ctx: &egui::Context, chat: &mut ChatPanel) {
 fn answer_is_added_to_history() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let mut chat = chat(&runtime);
-    let ctx = egui::Context::default();
-    chat.send(&ctx, "Reply with the single word: pong");
+    chat.send("Reply with the single word: pong");
     assert!(chat.is_running());
-    run_until_done(&ctx, &mut chat);
+    run_until_done(&chat);
 
     let history = chat.history();
     println!("{history:#?}");
@@ -69,8 +56,8 @@ fn answer_is_added_to_history() {
 
     // A second turn sees the first one
     let len = history.len();
-    chat.send(&ctx, "What word did you just reply with?");
-    run_until_done(&ctx, &mut chat);
+    chat.send("What word did you just reply with?");
+    run_until_done(&chat);
     assert!(chat.history().len() > len);
 }
 
@@ -92,12 +79,8 @@ fn tool_call_and_result_are_in_history() {
     let mut chat = chat_with(runtime.handle().clone(), |agent| {
         agent.with_toolbox(Calculator)
     });
-    let ctx = egui::Context::default();
-    chat.send(
-        &ctx,
-        "Use the add tool to add 1234 and 4321, then tell me the sum.",
-    );
-    run_until_done(&ctx, &mut chat);
+    chat.send("Use the add tool to add 1234 and 4321, then tell me the sum.");
+    run_until_done(&chat);
 
     let history = chat.history();
     println!("{history:#?}");
@@ -120,16 +103,14 @@ fn tool_call_and_result_are_in_history() {
 fn cancelled_turn_is_kept() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let mut chat = chat(&runtime);
-    let ctx = egui::Context::default();
-    chat.send(&ctx, "Count from 1 to 200, one number per line.");
-    frame(&ctx, &mut chat);
-    chat.cancel();
+    chat.send("Count from 1 to 200, one number per line.");
+    std::thread::sleep(Duration::from_millis(500));
+    chat.stop();
     assert!(!chat.is_running());
-    let kept = chat.history().to_vec();
+    let kept = chat.history();
     assert!(!kept.is_empty(), "the prompt was not kept");
-    // The aborted task sends nothing more
+    // The aborted task adds nothing more
     std::thread::sleep(Duration::from_secs(2));
-    frame(&ctx, &mut chat);
     assert_eq!(chat.history(), kept);
 }
 
@@ -139,9 +120,8 @@ fn cancelled_turn_is_kept() {
 #[ignore = "needs a model server"]
 fn answer_on_smol() {
     let mut chat = chat_with(egui_agent_chat::SmolGlobal, |agent| agent);
-    let ctx = egui::Context::default();
-    chat.send(&ctx, "Reply with the single word: pong");
-    run_until_done(&ctx, &mut chat);
+    chat.send("Reply with the single word: pong");
+    run_until_done(&chat);
     assert_eq!(chat.history().len(), 2, "the turn failed");
 }
 
@@ -158,11 +138,10 @@ fn red_square() -> Vec<u8> {
 fn image_in_prompt_reaches_the_model() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let mut chat = chat(&runtime);
-    let ctx = egui::Context::default();
     let prompt = agentai::Prompt::text("What color is this image? Answer with one word.")
         .with_image_bytes("image/png", red_square());
-    chat.send(&ctx, prompt);
-    run_until_done(&ctx, &mut chat);
+    chat.send(prompt);
+    run_until_done(&chat);
 
     let history = chat.history();
     assert_eq!(history.len(), 2, "the turn failed");
@@ -198,12 +177,8 @@ fn the_conversation_goes_on_after_a_stopped_reply() {
             ],
         ),
     ]);
-    let ctx = egui::Context::default();
-    chat.send(
-        &ctx,
-        "I stopped you. Which number did you write last? Reply with digits only.",
-    );
-    run_until_done(&ctx, &mut chat);
+    chat.send("I stopped you. Which number did you write last? Reply with digits only.");
+    run_until_done(&chat);
     assert_eq!(chat.history().len(), 4, "the provider refused the history");
     println!("{:?}", chat.history()[3].text());
 }

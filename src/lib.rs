@@ -1,31 +1,41 @@
 //! An [egui] chat widget for [agentai] agents.
 //!
-//! [`ChatPanel`] shows a conversation with an [`Agent`]: answers stream in as they are
-//! written, reasoning and tool calls (with their arguments and results) are collapsible, and
-//! images in or named in tool results are shown below the call. The user writes in the input at
-//! the bottom: Enter sends, Shift+Enter adds a line, and a running answer can be stopped.
+//! [`ChatPanel`] shows a conversation with an agent: answers stream in as they are written,
+//! reasoning and tool calls (with their arguments and results) are collapsible, and images in
+//! or named in tool results are shown below the call. The user writes in the input at the
+//! bottom: Enter sends, Shift+Enter adds a line, and a running answer can be stopped.
 //! [`ChatPanel::set_send_shortcut`] picks another key combination for sending, e.g.
 //! Shift+Enter for mostly multi-line messages, and [`ChatPanel::set_toolbar`] hides the
 //! Send/Stop buttons below the input. [`ChatPanel::ui_with_toolbar`] adds your own widgets to
 //! that toolbar, e.g. an attach button with your file picker.
 //!
+//! The panel is a view. It holds no agent and starts nothing: your app runs the agent, the
+//! panel shows the run through a [`ChatSink`] and tells you what the person asked for with
+//! [`ChatAction`]s. So a turn runs whether or not the panel is drawn, the conversation can
+//! exist before any panel, and one run can be shown in several panels, or also in a CLI.
+//!
 //! # Usage
 //!
-//! Build your agent with your own `agentai` dependency (0.6, the version this crate uses), then create the panel once with the agent and a [`Spawn`] that runs it on your async
-//! runtime, and call [`ChatPanel::ui`] every frame. With eframe and tokio:
+//! Build your agent with your own `agentai` dependency (0.6, the version this crate uses). The
+//! simplest app hands it to a [`Driver`] (feature `driver`, on by default) with a [`Spawn`]
+//! that runs it on your async runtime, connects the panel's sink, and passes it the panel's
+//! actions every frame. With eframe and tokio:
 //!
 //! ```no_run
 //! use agentai::Agent;
-//! use egui_agent_chat::ChatPanel;
+//! use egui_agent_chat::{ChatPanel, Driver};
 //!
 //! struct App {
 //!     chat: ChatPanel,
+//!     driver: Driver,
 //!     _runtime: tokio::runtime::Runtime,
 //! }
 //!
 //! impl eframe::App for App {
 //!     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-//!         self.chat.ui(ui);
+//!         for action in self.chat.ui(ui) {
+//!             self.driver.handle(&action);
+//!         }
 //!     }
 //! }
 //!
@@ -33,60 +43,80 @@
 //!     // agentai picks the provider from the model name and reads its key, e.g. OPENAI_API_KEY
 //!     let agent = Agent::new("gpt-4.1-mini", "You are helpful.")?;
 //!     let runtime = tokio::runtime::Runtime::new()?;
-//!     let chat = ChatPanel::new(runtime.handle().clone(), agent);
-//!     let app = App { chat, _runtime: runtime };
+//!     let mut driver = Driver::new(runtime.handle().clone(), agent);
 //!     eframe::run_native(
 //!         "Chat",
 //!         eframe::NativeOptions::default(),
-//!         Box::new(|_| Ok(Box::new(app))),
+//!         Box::new(move |cc| {
+//!             let chat = ChatPanel::new();
+//!             let ctx = cc.egui_ctx.clone();
+//!             driver.add_sink(chat.sink(move || ctx.request_repaint()));
+//!             Ok(Box::new(App { chat, driver, _runtime: runtime }))
+//!         }),
 //!     )
 //!     .map_err(|e| anyhow::anyhow!("{e}"))
 //! }
 //! ```
 //!
 //! The panel fills the `Ui` it gets; put it in a side panel or a window to share the screen.
-//! Messages can also be sent from code with [`ChatPanel::send`].
+//! [`Driver::send`] sends a message from code, and [`Driver::history`] is the conversation
+//! whether or not a panel exists.
 //!
-//! # Events
+//! # Your own loop
 //!
-//! [`ChatPanel::ui`] returns the [`ChatEvent`]s of the frame: a turn started, a tool was called
-//! or returned, and the turn finished, was stopped or failed. Use them, for example, to save
-//! the history when it grows or to show a status:
+//! Without the driver, run the agent yourself. [`ChatSink`] is an agentai
+//! [`EventListener`](agentai::listener::EventListener): give a clone to `listen`, and tell it
+//! what agentai's events do not carry, i.e. that a turn started, failed or was stopped.
+//! [`sendable`] and [`with_final_reasoning`] fix the history going in and coming out:
 //!
 //! ```no_run
-//! # fn save(_: &[agentai::Message]) {}
-//! # fn show(chat: &mut egui_agent_chat::ChatPanel, ui: &mut egui::Ui) {
-//! use egui_agent_chat::ChatEvent;
+//! use agentai::{Agent, Message, Prompt};
+//! use egui_agent_chat::{ChatSink, sendable, with_final_reasoning};
 //!
-//! for event in chat.ui(ui) {
-//!     match event {
-//!         ChatEvent::TurnFinished | ChatEvent::TurnStopped => save(chat.history()),
-//!         ChatEvent::TurnFailed { error } => {
-//!             eprintln!("the turn failed: {error}");
-//!             save(chat.history());
+//! /// One turn; returns the messages to add to `history`.
+//! async fn turn(agent: &Agent, history: &[Message], prompt: Prompt, sink: ChatSink) -> Vec<Message> {
+//!     sink.turn_started(&prompt);
+//!     let history = sendable(history);
+//!     let run = async {
+//!         agent
+//!             .run_stream::<String>(prompt)
+//!             .with_history(&history)
+//!             .await?
+//!             .listen(sink.clone())
+//!             .await
+//!     };
+//!     match run.await {
+//!         Ok(result) => with_final_reasoning(&result),
+//!         Err(error) => {
+//!             sink.turn_failed(&error);
+//!             Vec::new()
 //!         }
-//!         _ => {}
 //!     }
 //! }
-//! # }
 //! ```
+//!
+//! [`ChatAction::Send`] carries the prompt to run, [`ChatAction::Stop`] asks you to stop it
+//! (drop or abort its future, then call [`ChatSink::turn_stopped`]). The panel keeps a turn
+//! that failed or was stopped in its own history with what was streamed so far; the
+//! [`Driver`] does the same in its history.
 //!
 //! # Async runtime
 //!
-//! Each turn of the agent runs as a background task started through [`Spawn`]. It is
-//! implemented for `tokio::runtime::Handle` (feature `tokio`, on by default), for smol's
-//! `SmolGlobal` and `Arc<smol::Executor>` (feature `smol`), and for any closure
-//! `Fn(Task)`, so other runtimes take one line. agentai's HTTP client needs a tokio reactor;
-//! the smol implementations bring one through `async-compat`, and with your own closure on
-//! another runtime you need to do the same.
+//! The [`Driver`] runs each turn of the agent as a background task started through [`Spawn`].
+//! It is implemented for `tokio::runtime::Handle` (feature `tokio`, on by default), for smol's
+//! `SmolGlobal` and `Arc<smol::Executor>` (feature `smol`), and for any closure `Fn(Task)`, so
+//! other runtimes take one line. agentai's HTTP client needs a tokio reactor; the smol
+//! implementations bring one through `async-compat`, and with your own closure on another
+//! runtime you need to do the same.
 //!
 //! # History
 //!
-//! The conversation is a plain `Vec<agentai::Message>`. [`ChatPanel::history`] returns it,
-//! extended after every turn, so it can be saved; [`ChatPanel::set_history`] restores it. A
-//! turn that is stopped or fails stays in the history too, with everything the agent wrote so
-//! far, marked in the chat; the conversation goes on from it. Only tool calls left without a
-//! result are dropped, as providers refuse them.
+//! The conversation is a plain `Vec<agentai::Message>`. [`ChatPanel::history`] is what the
+//! panel shows, extended after every turn; [`ChatPanel::set_history`] replaces it, e.g. to
+//! show a saved conversation in a new panel. A turn that is stopped or fails stays in the
+//! history too, with everything the agent wrote so far, marked in the chat; the conversation
+//! goes on from it. Only tool calls left without a result are dropped, as providers refuse
+//! them.
 //!
 //! # Images
 //!
@@ -103,16 +133,17 @@
 //!
 //! # Questions
 //!
-//! The agent can ask the user to choose: [`ChatPanel::ask`] shows a [`Question`] as a form with
-//! its [`Choice`]s (text or images), one or several, optionally with an "Other" text field and
-//! Skip. The answer comes back as [`ChatEvent::QuestionAnswered`]. The chat does not answer the
-//! agent itself: a tool of yours asks, with the [`ToolCall::id`](agentai::ToolCall::id) of its
-//! call as the question's id so the form is shown under that call, waits for the answer your
-//! app passes back, and returns what the agent should know.
+//! The agent can ask the user to choose: [`ChatPanel::ask`] (or [`ChatSink::ask`], from your
+//! tool's thread) shows a [`Question`] as a form with its [`Choice`]s (text or images), one or
+//! several, optionally with an "Other" text field and Skip. The answer comes back as
+//! [`ChatAction::QuestionAnswered`]. The chat does not answer the agent itself: a tool of yours
+//! asks, with the [`ToolCall::id`](agentai::ToolCall::id) of its call as the question's id so
+//! the form is shown under that call, waits for the answer your app passes back, and returns
+//! what the agent should know.
 //!
 //! ```no_run
 //! # fn show(chat: &mut egui_agent_chat::ChatPanel, ui: &mut egui::Ui, call: &agentai::ToolCall) {
-//! use egui_agent_chat::{Answer, ChatEvent, Choice, Question, QuestionLayout};
+//! use egui_agent_chat::{Answer, ChatAction, Choice, Question, QuestionLayout};
 //!
 //! chat.set_question_layout(QuestionLayout::Horizontal);
 //! chat.ask(
@@ -122,8 +153,8 @@
 //!     ])
 //!     .with_other("Another format"),
 //! );
-//! for event in chat.ui(ui) {
-//!     if let ChatEvent::QuestionAnswered { id, answer: Answer::Chosen { choices, other } } = event {
+//! for action in chat.ui(ui) {
+//!     if let ChatAction::QuestionAnswered { id, answer: Answer::Chosen { choices, other } } = action {
 //!         // Send `choices` and `other` to the tool waiting for `id`
 //!     }
 //! }
@@ -139,62 +170,73 @@
 //!
 //! The input sends what the user writes by itself, so to add context to the user's next
 //! message, e.g. what changed in their project since the last one, give it to
-//! [`ChatPanel::set_pending_context`]. The next message, written or sent with
-//! [`ChatPanel::send`], starts with those blocks, hidden: the model gets them, the user sees
-//! only what they wrote. [`ChatEvent::TurnStarted`] tells you the blocks went with it:
+//! [`ChatPanel::set_pending_context`]. The prompt of the next [`ChatAction::Send`] starts with
+//! those blocks, hidden: the model gets them, the user sees only what they wrote. For a message
+//! you send from code, [`ChatPanel::with_pending_context`] adds them:
 //!
 //! ```no_run
-//! # fn show(chat: &mut egui_agent_chat::ChatPanel, ui: &mut egui::Ui, diff: String) {
-//! use egui_agent_chat::ChatEvent;
+//! # fn show(chat: &mut egui_agent_chat::ChatPanel, driver: &mut egui_agent_chat::Driver, ui: &mut egui::Ui, diff: String) {
+//! use egui_agent_chat::ChatAction;
 //!
 //! chat.set_pending_context(
 //!     vec![("Project changes".to_owned(), diff)],
 //!     Some("Project changes will be sent with your message".to_owned()),
 //! );
-//! for event in chat.ui(ui) {
-//!     if let ChatEvent::TurnStarted = event {
-//!         // The changes went with the message
+//! for action in chat.ui(ui) {
+//!     if let ChatAction::Send(_) = action {
+//!         // The changes go with the message
 //!     }
+//!     driver.handle(&action);
 //! }
 //! # }
 //! ```
 
 #![warn(missing_docs)]
 
+mod action;
 mod capabilities;
 mod context;
-mod event;
+#[cfg(feature = "driver")]
+mod driver;
+mod history;
 pub mod icons;
 mod media;
 mod question;
-mod run;
 mod shortcut;
+mod sink;
+#[cfg(feature = "driver")]
 mod spawn;
 mod toolbar;
 mod view;
 
+pub use action::ChatAction;
 pub use capabilities::ModelCapabilities;
 pub use context::{ContextBlock, context_block, context_block_hidden, split_context};
-pub use event::ChatEvent;
+#[cfg(feature = "driver")]
+pub use driver::Driver;
+pub use history::{sendable, with_final_reasoning};
 pub use question::{Answer, Choice, Question, QuestionLayout};
 pub use shortcut::SendShortcut;
+pub use sink::ChatSink;
 #[cfg(feature = "smol")]
 pub use spawn::SmolGlobal;
+#[cfg(feature = "driver")]
 pub use spawn::{Spawn, Task};
 pub use toolbar::Toolbar;
 
 use agentai::prompt::IntoPrompt;
-use agentai::{Agent, Media, Message, Part, Prompt, Role, ToolResponse};
-use run::{RunningTurn, Update};
+use agentai::{Media, Message, Part, Prompt};
+use sink::{Update, finished_messages, kept_messages, record};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{Receiver, Sender, channel};
 
 /// The running turn. It goes into the history when it ends.
 pub(crate) struct Turn {
-    /// The prompt, then what the agent has done so far.
+    /// The prompt, then what the agent has done so far. Without the prompt for a run that
+    /// was already going when the panel's sink was attached.
     pub(crate) messages: Vec<Message>,
-    running: RunningTurn,
 }
 
 /// The message being written: its text and attachments.
@@ -259,10 +301,8 @@ pub(crate) struct InputSettings {
     pub(crate) question_layout: QuestionLayout,
 }
 
-/// A chat with an agentai [`Agent`]. See the [crate docs](crate) for an example.
+/// A chat view of an agentai agent's conversation. See the [crate docs](crate) for an example.
 pub struct ChatPanel {
-    spawner: Arc<dyn Spawn>,
-    agent: Arc<Agent>,
     history: Vec<Message>,
     turn: Option<Turn>,
     marks: SessionMarks,
@@ -274,21 +314,29 @@ pub struct ChatPanel {
     /// Base of the ids of the chat's widgets, so that two chats in one frame don't share state.
     id: egui::Id,
     /// Not yet returned by `ui`.
-    events: Vec<ChatEvent>,
+    actions: Vec<ChatAction>,
     /// Context blocks (title, body) that go with the next message.
     pending_context: Vec<(String, String)>,
     /// Shown over the input while `pending_context` waits.
     pending_label: Option<String>,
+    /// What the sinks sent, taken in by `ui`.
+    updates: Receiver<Update>,
+    /// Cloned into every sink.
+    sender: Sender<Update>,
+}
+
+impl Default for ChatPanel {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ChatPanel {
-    /// Creates an empty chat with `agent`, whose turns run on `spawner`.
-    ///
-    /// `agent` may be an [`Agent`] or an `Arc<Agent>` shared with the rest of your app.
-    pub fn new(spawner: impl Spawn, agent: impl Into<Arc<Agent>>) -> Self {
+    /// Creates an empty chat. Give it a history with [`set_history`](Self::set_history) and a
+    /// run to show through a [`sink`](Self::sink).
+    pub fn new() -> Self {
+        let (sender, updates) = channel();
         Self {
-            spawner: Arc::new(spawner),
-            agent: agent.into(),
             history: Vec::new(),
             turn: None,
             marks: SessionMarks::default(),
@@ -305,10 +353,21 @@ impl ChatPanel {
                 static NEXT: AtomicU64 = AtomicU64::new(0);
                 egui::Id::unique(("egui_agent_chat", NEXT.fetch_add(1, Ordering::Relaxed)))
             },
-            events: Vec::new(),
+            actions: Vec::new(),
             pending_context: Vec::new(),
             pending_label: None,
+            updates,
+            sender,
         }
+    }
+
+    /// A [`ChatSink`] that passes a run of the agent to this panel; it calls `wake` after each
+    /// change, so the panel is drawn again. With egui, clone the context into it:
+    /// `chat.sink(move || ctx.request_repaint())`. The panel takes the changes in on its next
+    /// [`ui`](Self::ui). Every sink of a panel goes to the same panel, in the order they were
+    /// sent.
+    pub fn sink(&self, wake: impl Fn() + Send + Sync + 'static) -> ChatSink {
+        ChatSink::new(self.sender.clone(), Arc::new(wake))
     }
 
     /// Chooses the key combination that sends the message; the default is
@@ -320,7 +379,7 @@ impl ChatPanel {
 
     /// Shows or hides the toolbar below the input, with the Send and Stop buttons; it is shown
     /// by default. Without it, messages are sent with the shortcut only, and a running answer
-    /// can be stopped only with [`cancel`](Self::cancel).
+    /// can be stopped only by your app.
     pub fn set_toolbar(&mut self, visible: bool) {
         self.settings.toolbar = visible;
     }
@@ -350,9 +409,9 @@ impl ChatPanel {
     }
 
     /// Shows `question` in the chat as a form and waits for the user's answer, which comes as
-    /// [`ChatEvent::QuestionAnswered`]. A question with the id of a tool call is shown under
+    /// [`ChatAction::QuestionAnswered`]. A question with the id of a tool call is shown under
     /// that call, others at the end of the chat. Asking again with the same id replaces the
-    /// question.
+    /// question. [`ChatSink::ask`] does the same from another thread.
     ///
     /// A question asked by a tool call of the running turn goes away when the turn ends
     /// without an answer, as its tool is stopped. Others wait until they are answered or
@@ -365,19 +424,19 @@ impl ChatPanel {
     }
 
     /// Removes the form of the question `id` if it is still waiting for an answer, e.g. when
-    /// your tool gave up waiting. It sends no event.
+    /// your tool gave up waiting. It sends no action.
     pub fn dismiss_question(&mut self, id: &str) {
         self.questions.retain(|p| p.question.id != id);
     }
 
-    /// The conversation: every finished turn, including the user's prompts.
+    /// The conversation the panel shows: every turn that ended, including the user's prompts.
     pub fn history(&self) -> &[Message] {
         &self.history
     }
 
-    /// Replaces the conversation, stopping a running turn and clearing the input, its
-    /// attachments and the questions. An empty history starts a new chat. The stopped turn sends no
-    /// [`ChatEvent`].
+    /// Replaces the conversation, dropping a running turn from the view and clearing the
+    /// input, its attachments and the questions. An empty history starts a new chat. It does
+    /// not stop the run itself, which is your app's.
     pub fn set_history(&mut self, history: Vec<Message>) {
         self.turn = None;
         self.questions.clear();
@@ -391,13 +450,13 @@ impl ChatPanel {
         self.composer.text = text.into();
     }
 
-    /// Sets the context that goes with the next message, whether the user writes it or you
-    /// [`send`](Self::send) it: each (title, body) becomes a [`context_block_hidden`] before
-    /// the message's text, followed by a blank line, and the list is then emptied. The model
+    /// Sets the context that goes with the next message the user sends: each (title, body)
+    /// becomes a [`context_block_hidden`] before the message's text in the prompt of
+    /// [`ChatAction::Send`], followed by a blank line, and the list is then emptied. The model
     /// gets the blocks; the chat does not show them, so the user's bubble holds only what they
-    /// wrote, and a message of only pending context is not drawn at all. Call it on any
-    /// frame; it replaces the context set before, and an empty list sets none.
-    /// [`ChatEvent::TurnStarted`] tells you the context went with a message.
+    /// wrote, and a message of only pending context is not drawn at all. Call it on any frame;
+    /// it replaces the context set before, and an empty list sets none. For a message you send
+    /// from code, take the context with [`with_pending_context`](Self::with_pending_context).
     ///
     /// `label`, e.g. "Project changes will be sent with your message", is shown dimmed over
     /// the input while the context waits. [`set_history`](Self::set_history) keeps both.
@@ -406,52 +465,30 @@ impl ChatPanel {
         self.pending_label = label;
     }
 
-    /// Whether the agent is working on an answer.
+    /// `prompt` with the [pending context](Self::set_pending_context) before its text, which
+    /// is then no longer pending. Use it for a message you send from code, so the context goes
+    /// with it as with one the user writes.
+    pub fn with_pending_context(&mut self, prompt: impl IntoPrompt) -> Prompt {
+        let blocks = std::mem::take(&mut self.pending_context);
+        self.pending_label = None;
+        with_context(prompt.into_prompt(), &blocks)
+    }
+
+    /// Whether the panel shows a running turn: from [`ChatSink::turn_started`] (or the first
+    /// event of a run) until the run finishes, fails or is stopped. It follows what the panel
+    /// has taken in, i.e. it changes on [`ui`](Self::ui).
     pub fn is_running(&self) -> bool {
         self.turn.is_some()
     }
 
-    /// Sends `prompt` to the agent with the current history. A running turn is stopped first,
-    /// as with [`cancel`](Self::cancel). The input calls it when the user sends a message.
-    ///
-    /// `prompt` is anything agentai accepts: text, or an [`agentai::Prompt`] with images, e.g.
-    /// `Prompt::text("What is in it?").with_image_bytes("image/png", &png)`. The chat does
-    /// not check those images against [`set_capabilities`](Self::set_capabilities). The
-    /// [pending context](Self::set_pending_context) goes before its text.
-    pub fn send(&mut self, ctx: &egui::Context, prompt: impl IntoPrompt) {
-        self.cancel();
-        let blocks = std::mem::take(&mut self.pending_context);
-        self.pending_label = None;
-        let prompt = with_context(prompt.into_prompt(), &blocks);
-        let shown = Message::new(Role::User, prompt.parts().to_vec());
-        let running = run::spawn(
-            self.spawner.as_ref(),
-            self.agent.clone(),
-            self.history.clone(),
-            prompt,
-            ctx.clone(),
-        );
-        self.turn = Some(Turn {
-            messages: vec![shown],
-            running,
-        });
-        self.events.push(ChatEvent::TurnStarted);
-    }
-
-    /// Stops the running turn. The prompt and what the agent wrote so far stay in the history,
-    /// marked as stopped, and the conversation goes on from them.
-    pub fn cancel(&mut self) {
-        if let Some(turn) = self.turn.take() {
-            self.keep(turn, Note::Stopped);
-            self.events.push(ChatEvent::TurnStopped);
-        }
-    }
-
-    /// Adds a turn that ended early to the history, marked with `note`. Dropping the turn stops
-    /// its task.
+    /// Ends the running turn early: it goes into the history, marked with `note`.
     fn keep(&mut self, turn: Turn, note: Note) {
         self.drop_questions(&turn.messages);
-        self.history.extend(kept_messages(&turn.messages));
+        let kept = kept_messages(&turn.messages);
+        if kept.is_empty() {
+            return;
+        }
+        self.history.extend(kept);
         self.marks.notes.insert(self.history.len() - 1, note);
     }
 
@@ -470,10 +507,10 @@ impl ChatPanel {
             .retain(|p| !calls.contains(p.question.id.as_str()));
     }
 
-    /// Shows the chat in all of `ui`. Call it every frame: it also takes in what the agent
-    /// streamed since the last frame. Returns what happened since the last frame, e.g. that a
-    /// turn finished, see [`ChatEvent`]; ignore it if you don't need it.
-    pub fn ui(&mut self, ui: &mut egui::Ui) -> Vec<ChatEvent> {
+    /// Shows the chat in all of `ui`. Call it every frame: it also takes in what the sinks sent
+    /// since the last frame. Returns what the person did since the last frame, see
+    /// [`ChatAction`].
+    pub fn ui(&mut self, ui: &mut egui::Ui) -> Vec<ChatAction> {
         self.ui_with_toolbar(ui, |_| {})
     }
 
@@ -484,9 +521,9 @@ impl ChatPanel {
         &mut self,
         ui: &mut egui::Ui,
         add_widgets: impl FnOnce(&mut Toolbar<'_>),
-    ) -> Vec<ChatEvent> {
+    ) -> Vec<ChatAction> {
         icons::ensure_installed(ui.ctx());
-        self.poll();
+        self.take_updates();
         self.take_dropped_images(ui.ctx());
         let running = self.is_running();
         let action = view::input(
@@ -502,8 +539,11 @@ impl ChatPanel {
             add_widgets,
         );
         match action {
-            Some(view::InputAction::Send(prompt)) => self.send(ui.ctx(), prompt),
-            Some(view::InputAction::Stop) => self.cancel(),
+            Some(view::InputAction::Send(prompt)) => {
+                let prompt = self.with_pending_context(prompt);
+                self.actions.push(ChatAction::Send(prompt));
+            }
+            Some(view::InputAction::Stop) => self.actions.push(ChatAction::Stop),
             None => {}
         }
         let mut forms = question::Forms::new(
@@ -527,9 +567,10 @@ impl ChatPanel {
                     .answers
                     .insert(id.clone(), (question, answer.clone()));
             }
-            self.events.push(ChatEvent::QuestionAnswered { id, answer });
+            self.actions
+                .push(ChatAction::QuestionAnswered { id, answer });
         }
-        std::mem::take(&mut self.events)
+        std::mem::take(&mut self.actions)
     }
 
     /// Attaches the images dropped on the window, if the model reads images.
@@ -543,66 +584,61 @@ impl ChatPanel {
         }
     }
 
-    /// Adds what the agent streamed to the running turn.
-    fn poll(&mut self) {
-        let Some(turn) = &mut self.turn else {
-            return;
-        };
-        let updates: Vec<Update> = turn.running.updates.try_iter().collect();
-        for update in updates {
-            match update {
-                Update::Text(delta) => match reply(&mut turn.messages).parts.last_mut() {
-                    Some(Part::Text(text)) => text.push_str(&delta),
-                    _ => reply(&mut turn.messages).parts.push(Part::Text(delta)),
-                },
-                Update::Reasoning(delta) => match reply(&mut turn.messages).parts.last_mut() {
-                    Some(Part::Reasoning(text)) => text.push_str(&delta),
-                    _ => reply(&mut turn.messages).parts.push(Part::Reasoning(delta)),
-                },
-                Update::ToolCall(call) => {
-                    self.events.push(ChatEvent::ToolCalled(call.clone()));
-                    reply(&mut turn.messages).parts.push(Part::ToolCall(call));
+    /// Takes in what the sinks sent.
+    fn take_updates(&mut self) {
+        while let Ok(update) = self.updates.try_recv() {
+            self.apply(update);
+        }
+    }
+
+    fn apply(&mut self, update: Update) {
+        match update {
+            Update::Started(prompt) => {
+                if let Some(turn) = self.turn.take() {
+                    self.keep(turn, Note::Stopped);
                 }
-                Update::ToolResult {
-                    call_id,
-                    content,
-                    is_error,
-                } => {
-                    let call = turn
-                        .messages
-                        .iter()
-                        .flat_map(|m| &m.parts)
-                        .find_map(|part| match part {
-                            Part::ToolCall(call) if call.id == call_id => Some(call.clone()),
-                            _ => None,
-                        });
-                    if let Some(call) = call {
-                        let response = ToolResponse::new(&call, content);
-                        turn.messages.push(Message::tool_response(response));
-                    }
-                    self.events.push(ChatEvent::ToolFinished {
-                        call_id: call_id.clone(),
-                        is_error,
-                    });
-                    if is_error {
-                        self.marks.failed_tools.insert(call_id);
-                    }
-                }
-                Update::Finished(messages) => {
-                    self.history.extend(messages);
-                    if let Some(turn) = self.turn.take() {
+                self.turn = Some(Turn {
+                    messages: vec![prompt],
+                });
+            }
+            Update::Finished(new_messages) => {
+                let streamed = match self.turn.take() {
+                    Some(turn) => {
                         self.drop_questions(&turn.messages);
+                        turn.messages
                     }
-                    self.events.push(ChatEvent::TurnFinished);
-                    return;
+                    None => Vec::new(),
+                };
+                self.history
+                    .extend(finished_messages(new_messages, &streamed));
+            }
+            Update::Failed(error) => {
+                if let Some(turn) = self.turn.take() {
+                    self.keep(turn, Note::Failed(error));
                 }
-                Update::Failed(error) => {
-                    if let Some(turn) = self.turn.take() {
-                        self.keep(turn, Note::Failed(error.clone()));
-                    }
-                    self.events.push(ChatEvent::TurnFailed { error });
-                    return;
+            }
+            Update::Stopped => {
+                if let Some(turn) = self.turn.take() {
+                    self.keep(turn, Note::Stopped);
                 }
+            }
+            Update::Ask(question) => self.ask(question),
+            Update::Dismiss(id) => self.dismiss_question(&id),
+            Update::SetHistory(history) => self.set_history(history),
+            update => {
+                if let Update::ToolResult {
+                    call_id,
+                    is_error: true,
+                    ..
+                } = &update
+                {
+                    self.marks.failed_tools.insert(call_id.clone());
+                }
+                // A run already going when the sink was attached shows from its next event
+                let turn = self.turn.get_or_insert_with(|| Turn {
+                    messages: Vec::new(),
+                });
+                record(&mut turn.messages, update);
             }
         }
     }
@@ -644,48 +680,9 @@ fn add_part(prompt: Prompt, part: Part) -> Prompt {
     }
 }
 
-/// The messages of a turn that ended early, without the tool calls that got no result, as
-/// providers refuse a history with them.
-fn kept_messages(messages: &[Message]) -> Vec<Message> {
-    let answered: HashSet<&str> = messages
-        .iter()
-        .flat_map(|m| &m.parts)
-        .filter_map(|part| match part {
-            Part::ToolResponse(response) => Some(response.call_id.as_str()),
-            _ => None,
-        })
-        .collect();
-    messages
-        .iter()
-        .filter_map(|message| {
-            let mut message = message.clone();
-            message.parts.retain(|part| match part {
-                Part::ToolCall(call) => answered.contains(call.id.as_str()),
-                _ => true,
-            });
-            (message.role != Role::Assistant || !message.parts.is_empty()).then_some(message)
-        })
-        .collect()
-}
-
-/// The assistant message the streamed answer goes into, started after the prompt or a tool
-/// result.
-fn reply(messages: &mut Vec<Message>) -> &mut Message {
-    if messages.last().is_none_or(|m| m.role != Role::Assistant) {
-        messages.push(Message::new(Role::Assistant, Vec::new()));
-    }
-    messages.last_mut().expect("a message was just pushed")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentai::ToolCall;
-    use serde_json::json;
-
-    fn assistant(parts: Vec<Part>) -> Message {
-        Message::new(Role::Assistant, parts)
-    }
 
     #[test]
     fn context_goes_before_the_text() {
@@ -711,27 +708,5 @@ mod tests {
             ]
         );
         assert_eq!(with_context(Prompt::text("hi"), &[]), Prompt::text("hi"));
-    }
-
-    #[test]
-    fn the_prompt_alone_and_reasoning_are_kept() {
-        let prompt = Message::user("hi");
-        let alone = std::slice::from_ref(&prompt);
-        assert_eq!(kept_messages(alone), alone);
-        let messages = vec![prompt, assistant(vec![Part::Reasoning("hmm".into())])];
-        assert_eq!(kept_messages(&messages), messages);
-    }
-
-    #[test]
-    fn tool_calls_without_a_result_are_dropped() {
-        let done = ToolCall::new("c1", "add", json!({}));
-        let pending = ToolCall::new("c2", "add", json!({}));
-        let messages = vec![
-            Message::user("add"),
-            assistant(vec![Part::ToolCall(done.clone())]),
-            Message::tool_response(ToolResponse::new(&done, "3")),
-            assistant(vec![Part::ToolCall(pending)]),
-        ];
-        assert_eq!(kept_messages(&messages), messages[..3]);
     }
 }

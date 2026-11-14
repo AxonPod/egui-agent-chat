@@ -13,11 +13,14 @@ exclude = ["docs/", ".github/", ".zed/", "CLAUDE.md"]
 
 [features]
 default = ["tokio"]
+## `Driver`, which runs the agent for a panel's actions, and the `Spawn` trait it starts turns
+## with.
+driver = ["dep:futures-util"]
 ## Implements `Spawn` for `tokio::runtime::Handle`.
-tokio = ["dep:tokio"]
+tokio = ["driver", "dep:tokio"]
 ## Implements `Spawn` for smol's global executor and for `Arc<smol::Executor>`. Tasks run
 ## through async-compat, which gives agentai's tokio-based HTTP client its reactor.
-smol = ["dep:smol", "dep:async-compat"]
+smol = ["driver", "dep:smol", "dep:async-compat"]
 
 [dependencies]
 agentai = { version = "0.6", default-features = false }
@@ -27,7 +30,7 @@ egui = "0.37"
 egui_commonmark = { version = "0.26", features = [
     "better_syntax_highlighting",
 ] }
-futures-util = "0.3.34"
+futures-util = { version = "0.3.34", optional = true }
 serde_json = "1.0.154"
 smol = { version = "2", optional = true }
 tokio = { version = "1", features = ["rt"], optional = true }
@@ -63,11 +66,15 @@ name = "agent"
 required-features = ["tokio"]
 
 [[test]]
-name = "input"
+name = "turns"
 required-features = ["tokio"]
 
-[[test]]
-name = "turns"
+[[example]]
+name = "headless"
+required-features = ["tokio"]
+
+[[example]]
+name = "two_panels"
 required-features = ["tokio"]
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]

@@ -1,4 +1,4 @@
-//! A window with a chat to an agent.
+//! A window with a chat to an agent, run by a `Driver`.
 //!
 //! Configure the agent with environment variables, or a `.env` file: `AGENTAI_MODEL` names
 //! the model, e.g. `openai::gpt-4.1-mini`, and agentai reads the rest from the provider's usual
@@ -18,9 +18,7 @@ mod menu;
 use agentai::tool::buildin::CurrentDateAndTimeToolBox;
 use agentai::{Agent, Media};
 use anyhow::{Context, Result, anyhow};
-use egui_agent_chat::{
-    ChatEvent, ChatPanel, ModelCapabilities, QuestionLayout, SendShortcut, icons,
-};
+use egui_agent_chat::{ChatPanel, Driver, ModelCapabilities, QuestionLayout, SendShortcut, icons};
 use menu::{AppMenu, Command, Settings};
 
 #[cfg(not(any(feature = "tokio", feature = "smol")))]
@@ -53,10 +51,11 @@ fn main() -> Result<()> {
 
 struct ChatApp {
     chat: ChatPanel,
-    questions: ask::Questions,
+    driver: Driver,
+    answers: ask::Answers,
     menu: AppMenu,
     settings: Settings,
-    // Dropped last: the chat's running turn is a task on it
+    // Dropped last: the driver's running turn is a task on it
     #[cfg(feature = "tokio")]
     _runtime: tokio::runtime::Runtime,
 }
@@ -65,7 +64,10 @@ impl ChatApp {
     fn new(cc: &eframe::CreationContext<'_>, agent: Agent) -> Result<Self> {
         // Shows attached images and the pictures that tools name in their results
         egui_extras::install_image_loaders(&cc.egui_ctx);
-        let (ask_user, questions) = ask::channel(cc.egui_ctx.clone());
+        let chat = ChatPanel::new();
+        let ctx = cc.egui_ctx.clone();
+        let sink = chat.sink(move || ctx.request_repaint());
+        let (ask_user, answers) = ask::tool(sink.clone());
         let agent = agent.with_toolbox(ask_user);
         let settings = Settings {
             shift_enter_sends: false,
@@ -76,12 +78,14 @@ impl ChatApp {
         #[cfg(feature = "tokio")]
         let runtime = tokio::runtime::Runtime::new()?;
         #[cfg(feature = "tokio")]
-        let chat = ChatPanel::new(runtime.handle().clone(), agent);
+        let mut driver = Driver::new(runtime.handle().clone(), agent);
         #[cfg(not(feature = "tokio"))]
-        let chat = ChatPanel::new(egui_agent_chat::SmolGlobal, agent);
+        let mut driver = Driver::new(egui_agent_chat::SmolGlobal, agent);
+        driver.add_sink(sink);
         let mut app = Self {
             chat,
-            questions,
+            driver,
+            answers,
             menu: AppMenu::install(&cc.egui_ctx, settings),
             settings,
             #[cfg(feature = "tokio")]
@@ -112,8 +116,8 @@ impl ChatApp {
 
     fn handle(&mut self, ctx: &egui::Context, command: Command) {
         match command {
-            Command::NewChat => self.chat.set_history(Vec::new()),
-            Command::Stop => self.chat.cancel(),
+            Command::NewChat => self.driver.set_history(Vec::new()),
+            Command::Stop => self.driver.stop(),
             Command::ToggleShiftEnterSends => {
                 self.settings.shift_enter_sends = !self.settings.shift_enter_sends;
                 self.apply_settings();
@@ -158,8 +162,7 @@ impl eframe::App for ChatApp {
         for command in self.menu.window_bar(ui, self.settings) {
             self.handle(&ctx, command);
         }
-        self.questions.show(&mut self.chat);
-        let events = self.chat.ui_with_toolbar(ui, |toolbar| {
+        let actions = self.chat.ui_with_toolbar(ui, |toolbar| {
             // Off for a text-only model, which could not read the image
             let images = toolbar.capabilities().images;
             let attach = toolbar
@@ -178,14 +181,10 @@ impl eframe::App for ChatApp {
                 toolbar.attach(image);
             }
         });
-        // The chat shows all of this too; an app could save the history or update its status
-        for event in events {
-            self.questions.answer(&event);
-            match event {
-                ChatEvent::ToolCalled(call) => eprintln!("tool: {}", call.name),
-                ChatEvent::TurnFailed { error } => eprintln!("the turn failed: {error}"),
-                _ => {}
-            }
+        // What the person did: the driver runs the agent for it, the tool gets its answers
+        for action in actions {
+            self.answers.answer(&action);
+            self.driver.handle(&action);
         }
     }
 }

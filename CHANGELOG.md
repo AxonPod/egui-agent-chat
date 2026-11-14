@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+### Breaking changes
+
+- The panel is a view, not the agent's driver. `ChatPanel::new()` takes no agent and no
+  spawner, and the panel starts nothing: a turn no longer moves only while the panel is drawn.
+- `ChatPanel::ui` returns `Vec<ChatAction>`, what the person did: `Send(Prompt)` (with the
+  attachments and the pending context), `Stop` and `QuestionAnswered { id, answer }`.
+  `ChatEvent` is gone with `TurnStarted`, `ToolCalled`, `ToolFinished`, `TurnFinished`,
+  `TurnStopped` and `TurnFailed`: the host knows them from its own loop.
+- `ChatPanel::send` and `ChatPanel::cancel` are gone. Use `Driver::send` and `Driver::stop`,
+  or your own loop.
+- `Spawn` and `Task` are behind the new feature `driver`, which `tokio` and `smol` turn on.
+
+### New
+
+- `ChatSink`, made by `ChatPanel::sink(wake)`: an agentai `EventListener` that passes a run to
+  the panel, plus `turn_started`, `turn_failed`, `turn_stopped`, `ask`, `dismiss_question` and
+  `set_history`. It is `Clone + Send`; one run can be shown in several panels, and a panel can
+  be made at any time, from a history or attached to a run in progress.
+- `Driver` (feature `driver`, on by default): owns the agent, the history and the running turn,
+  runs a turn for `ChatAction::Send` and stops it for `Stop`, with any number of sinks. Its turns
+  finish, and are in `Driver::history()`, without any panel being drawn.
+- `sendable(history)` and `with_final_reasoning(&result)`, the two history fixes the chat made
+  internally, for hosts that run the agent themselves.
+- `ChatPanel::with_pending_context(prompt)` adds the pending context to a prompt sent from
+  code.
+- Examples `headless` (a turn before any panel exists) and `two_panels` (one run in two panels).
+
 ## 0.4.0
 
 ### Breaking changes

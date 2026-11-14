@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 /// The chat shows a form with the [`choices`](Self::choices): radio buttons, or checkboxes
 /// when several may be chosen. The form can also offer [`other`](Self::other), a choice with a
 /// text field, and a Skip button that declines the question. The answer comes back as
-/// [`ChatEvent::QuestionAnswered`](crate::ChatEvent::QuestionAnswered).
+/// [`ChatAction::QuestionAnswered`](crate::ChatAction::QuestionAnswered).
 ///
 /// The `id` is yours. Give it the [`ToolCall::id`](agentai::ToolCall::id) of the call that asks,
 /// and the form is shown under that call; a question with another id is shown at the end of the

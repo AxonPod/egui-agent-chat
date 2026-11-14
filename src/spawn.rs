@@ -3,13 +3,14 @@
 use std::future::Future;
 use std::pin::Pin;
 
-/// A background task: one turn of the agent.
+/// A background task: one turn of the agent, started by a [`Driver`](crate::Driver).
 pub type Task = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
 
 /// Starts background tasks on an async runtime.
 ///
-/// The chat runs every turn of the agent as a [`Task`] it hands to `spawn`. The task does not
-/// need to be awaited or kept: the chat stops a turn itself, without help from the runtime.
+/// The [`Driver`](crate::Driver) runs every turn of the agent as a [`Task`] it hands to
+/// `spawn`. The task does not need to be awaited or kept: the driver stops a turn itself,
+/// without help from the runtime.
 ///
 /// Implemented for:
 /// - `tokio::runtime::Handle` (feature `tokio`, on by default),
@@ -18,7 +19,7 @@ pub type Task = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
 ///
 /// ```ignore
 /// // `my_runtime` stands for your runtime's handle
-/// let chat = ChatPanel::new(move |task: Task| my_runtime.spawn(task), agent);
+/// let driver = Driver::new(move |task: Task| my_runtime.spawn(task), agent);
 /// ```
 pub trait Spawn: Send + Sync + 'static {
     /// Starts `task` in the background.

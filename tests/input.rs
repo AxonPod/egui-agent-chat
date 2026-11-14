@@ -1,44 +1,80 @@
-//! Typing in the chat input, without a model: the agent talks to a server that accepts the
-//! connection and never answers, so a sent message stays running.
+//! Typing in the chat input, without a model: the test host starts and stops turns through
+//! the panel's sink, as an app would, but runs nothing.
 
-mod common;
-
+use agentai::Prompt;
 use egui::accesskit::Role;
 use egui::{Event, Key, KeyboardShortcut, Modifiers};
 use egui_agent_chat::{
-    Answer, ChatEvent, ChatPanel, Choice, Question, QuestionLayout, SendShortcut, context_block,
-    context_block_hidden,
+    Answer, ChatAction, ChatPanel, ChatSink, Choice, Question, QuestionLayout, SendShortcut,
+    context_block, context_block_hidden,
 };
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
-use std::cell::RefCell;
-use std::net::TcpListener;
-use std::rc::Rc;
+use std::ops::{Deref, DerefMut};
 
-fn harness(
-    runtime: &tokio::runtime::Runtime,
-    setup: impl FnOnce(&mut ChatPanel),
-) -> Harness<'static, ChatPanel> {
-    harness_with_ui(runtime, setup, |ui, chat| {
-        chat.ui(ui);
-    })
+/// A panel and a host that only tells it that a sent turn runs, until Stop.
+struct Host {
+    chat: ChatPanel,
+    sink: ChatSink,
+    actions: Vec<ChatAction>,
+}
+
+impl Host {
+    fn handle(&mut self, actions: Vec<ChatAction>) {
+        for action in actions {
+            match &action {
+                ChatAction::Send(prompt) => self.sink.turn_started(prompt),
+                ChatAction::Stop => self.sink.turn_stopped(),
+                _ => {}
+            }
+            self.actions.push(action);
+        }
+    }
+
+    /// Stops the running turn, as the host's own Stop would.
+    fn stop(&mut self) {
+        self.sink.turn_stopped();
+    }
+}
+
+impl Deref for Host {
+    type Target = ChatPanel;
+    fn deref(&self) -> &ChatPanel {
+        &self.chat
+    }
+}
+
+impl DerefMut for Host {
+    fn deref_mut(&mut self) -> &mut ChatPanel {
+        &mut self.chat
+    }
+}
+
+fn harness(setup: impl FnOnce(&mut ChatPanel)) -> Harness<'static, Host> {
+    harness_with_ui(setup, |ui, chat| chat.ui(ui))
 }
 
 fn harness_with_ui(
-    runtime: &tokio::runtime::Runtime,
     setup: impl FnOnce(&mut ChatPanel),
-    app: impl FnMut(&mut egui::Ui, &mut ChatPanel) + 'static,
-) -> Harness<'static, ChatPanel> {
-    let server = TcpListener::bind("127.0.0.1:0").unwrap();
-    let url = format!("http://{}/v1/", server.local_addr().unwrap());
-    std::thread::spawn(move || {
-        let _connections: Vec<_> = server.incoming().collect();
-    });
-    let mut chat = ChatPanel::new(runtime.handle().clone(), common::local_agent(&url));
+    mut app: impl FnMut(&mut egui::Ui, &mut ChatPanel) -> Vec<ChatAction> + 'static,
+) -> Harness<'static, Host> {
+    let mut chat = ChatPanel::new();
     setup(&mut chat);
+    let sink = chat.sink(|| {});
+    let host = Host {
+        chat,
+        sink,
+        actions: Vec::new(),
+    };
     let mut harness = Harness::builder()
         .with_size(egui::vec2(400.0, 600.0))
-        .build_ui_state(app, chat);
+        .build_ui_state(
+            move |ui, host: &mut Host| {
+                let actions = app(ui, &mut host.chat);
+                host.handle(actions);
+            },
+            host,
+        );
     // As an app would, so attached images can be drawn
     egui_extras::install_image_loaders(&harness.ctx);
     harness.get_by_role(Role::MultilineTextInput).click();
@@ -46,10 +82,14 @@ fn harness_with_ui(
     harness
 }
 
+/// Lets the panel send and take in that the turn started.
+fn send_steps(harness: &mut Harness<'_, Host>) {
+    harness.run_steps(2);
+}
+
 /// Types two lines joined with `new_line`, then sends them with `send`.
 fn type_and_send(shortcut: SendShortcut, new_line: Modifiers, send: Modifiers) {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let mut harness = harness(&runtime, |chat| chat.set_send_shortcut(shortcut));
+    let mut harness = harness(|chat| chat.set_send_shortcut(shortcut));
     harness.event(Event::Text("first".into()));
     harness.key_press_modifiers(new_line, Key::Enter);
     harness.event(Event::Text("second".into()));
@@ -67,7 +107,7 @@ fn type_and_send(shortcut: SendShortcut, new_line: Modifiers, send: Modifiers) {
     );
 
     harness.key_press_modifiers(send, Key::Enter);
-    harness.step();
+    send_steps(&mut harness);
     assert!(harness.state().is_running(), "the shortcut did not send");
 }
 
@@ -89,8 +129,7 @@ fn custom_shortcut_sends_and_enter_adds_a_line() {
 
 #[test]
 fn empty_input_is_not_sent() {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let mut harness = harness(&runtime, |_| {});
+    let mut harness = harness(|_| {});
     harness.event(Event::Text("  ".into()));
     harness.key_press(Key::Enter);
     harness.step();
@@ -99,57 +138,50 @@ fn empty_input_is_not_sent() {
 
 #[test]
 fn sending_and_stopping_are_reported() {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let events = Rc::new(RefCell::new(Vec::new()));
-    let seen = events.clone();
-    let mut harness = harness_with_ui(
-        &runtime,
-        |_| {},
-        move |ui, chat| seen.borrow_mut().extend(chat.ui(ui)),
-    );
+    let mut harness = harness(|_| {});
     harness.event(Event::Text("hi".into()));
     harness.key_press(Key::Enter);
-    harness.step();
-    assert_eq!(*events.borrow(), [ChatEvent::TurnStarted]);
+    send_steps(&mut harness);
+    assert_eq!(
+        harness.state().actions,
+        [ChatAction::Send(Prompt::text("hi"))]
+    );
+    assert!(harness.state().is_running());
 
     harness.get_by_label_contains("Stop").click();
     harness.run();
     assert_eq!(
-        *events.borrow(),
-        [ChatEvent::TurnStarted, ChatEvent::TurnStopped]
+        harness.state().actions,
+        [ChatAction::Send(Prompt::text("hi")), ChatAction::Stop]
     );
+    assert!(!harness.state().is_running());
+    // The stopped turn stays
+    assert_eq!(harness.state().history().len(), 1);
 }
 
 #[test]
 fn toolbar_can_be_hidden() {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    assert!(
-        harness(&runtime, |_| {})
-            .query_by_label_contains("Send")
-            .is_some()
-    );
+    assert!(harness(|_| {}).query_by_label_contains("Send").is_some());
 
-    let mut harness = harness(&runtime, |chat| chat.set_toolbar(false));
+    let mut harness = harness(|chat| chat.set_toolbar(false));
     assert!(harness.query_by_label_contains("Send").is_none());
     // The shortcut still sends
     harness.event(Event::Text("hi".into()));
     harness.key_press(Key::Enter);
-    harness.step();
+    send_steps(&mut harness);
     assert!(harness.state().is_running());
 }
 
 #[test]
 fn own_toolbar_widgets_can_change_the_input() {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
     let mut harness = harness_with_ui(
-        &runtime,
         |_| {},
         |ui, chat| {
             chat.ui_with_toolbar(ui, |toolbar| {
                 if toolbar.button("Attach").clicked() {
                     toolbar.input().push_str("/tmp/file.txt");
                 }
-            });
+            })
         },
     );
     harness.event(Event::Text("Read ".into()));
@@ -165,7 +197,7 @@ fn own_toolbar_widgets_can_change_the_input() {
     );
     // The built-in button is still there
     harness.get_by_label_contains("Send").click();
-    harness.step();
+    send_steps(&mut harness);
     assert!(harness.state().is_running());
 }
 
@@ -179,8 +211,7 @@ fn image() -> agentai::Media {
 
 #[test]
 fn images_need_the_capability() {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let mut harness = harness(&runtime, |_| {});
+    let mut harness = harness(|_| {});
     assert!(
         !harness.state_mut().attach(image()),
         "text-only model took an image"
@@ -206,8 +237,7 @@ fn images_need_the_capability() {
 
 #[test]
 fn an_image_alone_can_be_sent_and_removed() {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let mut harness = harness(&runtime, |chat| {
+    let mut harness = harness(|chat| {
         chat.set_capabilities(egui_agent_chat::ModelCapabilities::default().with_images(true));
     });
     harness.state_mut().attach(image());
@@ -220,7 +250,7 @@ fn an_image_alone_can_be_sent_and_removed() {
     harness.get_by_role(Role::MultilineTextInput).click();
     harness.run();
     harness.key_press(Key::Enter);
-    harness.step();
+    send_steps(&mut harness);
     assert!(
         harness.state().is_running(),
         "an image without text was not sent"
@@ -235,10 +265,6 @@ fn an_image_alone_can_be_sent_and_removed() {
 
 #[test]
 fn two_chats_in_one_frame_have_their_own_input() {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let server = TcpListener::bind("127.0.0.1:0").unwrap();
-    let url = format!("http://{}/v1/", server.local_addr().unwrap());
-    let chat = || ChatPanel::new(runtime.handle().clone(), common::local_agent(&url));
     let mut harness = Harness::builder()
         .with_size(egui::vec2(800.0, 600.0))
         .build_ui_state(
@@ -248,7 +274,7 @@ fn two_chats_in_one_frame_have_their_own_input() {
                     right.ui(&mut columns[1]);
                 });
             },
-            (chat(), chat()),
+            (ChatPanel::new(), ChatPanel::new()),
         );
     harness.run();
     harness
@@ -266,18 +292,9 @@ fn two_chats_in_one_frame_have_their_own_input() {
     assert_eq!(values, [Some("left".to_owned()), Some(String::new())]);
 }
 
-/// A chat whose events are collected, with nothing typed.
-fn harness_with_events(
-    runtime: &tokio::runtime::Runtime,
-) -> (Harness<'static, ChatPanel>, Rc<RefCell<Vec<ChatEvent>>>) {
-    let events = Rc::new(RefCell::new(Vec::new()));
-    let seen = events.clone();
-    let harness = harness_with_ui(
-        runtime,
-        |_| {},
-        move |ui, chat| seen.borrow_mut().extend(chat.ui(ui)),
-    );
-    (harness, events)
+/// A chat with nothing typed; its actions are in the host.
+fn harness_with_events() -> Harness<'static, Host> {
+    harness(|_| {})
 }
 
 fn colors() -> Question {
@@ -288,18 +305,20 @@ fn colors() -> Question {
     )
 }
 
-fn submit_disabled(harness: &Harness<'_, ChatPanel>) -> bool {
+fn submit_disabled(harness: &Harness<'_, Host>) -> bool {
     harness
         .get_by_label("Submit")
         .accesskit_node()
         .is_disabled()
 }
 
-fn answered(events: &[ChatEvent]) -> Vec<(String, Answer)> {
-    events
+fn answered(harness: &Harness<'_, Host>) -> Vec<(String, Answer)> {
+    harness
+        .state()
+        .actions
         .iter()
-        .filter_map(|event| match event {
-            ChatEvent::QuestionAnswered { id, answer } => Some((id.clone(), answer.clone())),
+        .filter_map(|action| match action {
+            ChatAction::QuestionAnswered { id, answer } => Some((id.clone(), answer.clone())),
             _ => None,
         })
         .collect()
@@ -307,8 +326,7 @@ fn answered(events: &[ChatEvent]) -> Vec<(String, Answer)> {
 
 #[test]
 fn a_question_is_answered_with_one_choice() {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let (mut harness, events) = harness_with_events(&runtime);
+    let mut harness = harness_with_events();
     harness.state_mut().ask(colors());
     harness.run();
     assert!(submit_disabled(&harness), "nothing chosen yet");
@@ -323,7 +341,7 @@ fn a_question_is_answered_with_one_choice() {
         choices: vec!["blue".into()],
         other: None,
     };
-    assert_eq!(answered(&events.borrow()), [("q1".into(), chosen)]);
+    assert_eq!(answered(&harness), [("q1".into(), chosen)]);
     assert!(
         harness.query_by_label("Submit").is_none(),
         "the form stayed"
@@ -332,8 +350,7 @@ fn a_question_is_answered_with_one_choice() {
 
 #[test]
 fn other_takes_the_users_own_answer() {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let (mut harness, events) = harness_with_events(&runtime);
+    let mut harness = harness_with_events();
     harness
         .state_mut()
         .ask(colors().with_other("Another color"));
@@ -351,21 +368,20 @@ fn other_takes_the_users_own_answer() {
     harness.key_press(Key::Enter);
     harness.event(Event::Text("but darker".into()));
     harness.run();
-    assert!(answered(&events.borrow()).is_empty());
+    assert!(answered(&harness).is_empty());
     harness.get_by_label("Submit").click();
     harness.run();
     let chosen = Answer::Chosen {
         choices: Vec::new(),
         other: Some("green\nbut darker".into()),
     };
-    assert_eq!(answered(&events.borrow()), [("q1".into(), chosen)]);
+    assert_eq!(answered(&harness), [("q1".into(), chosen)]);
     assert!(harness.state().history().is_empty());
 }
 
 #[test]
 fn several_images_can_be_chosen_side_by_side() {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let (mut harness, events) = harness_with_events(&runtime);
+    let mut harness = harness_with_events();
     harness
         .state_mut()
         .set_question_layout(QuestionLayout::Horizontal);
@@ -393,21 +409,17 @@ fn several_images_can_be_chosen_side_by_side() {
         choices: vec!["one".into(), "two".into()],
         other: None,
     };
-    assert_eq!(answered(&events.borrow()), [("q2".into(), chosen)]);
+    assert_eq!(answered(&harness), [("q2".into(), chosen)]);
 }
 
 #[test]
 fn a_question_can_be_declined_or_dismissed() {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let (mut harness, events) = harness_with_events(&runtime);
+    let mut harness = harness_with_events();
     harness.state_mut().ask(colors());
     harness.run();
     harness.get_by_label("Skip").click();
     harness.run();
-    assert_eq!(
-        answered(&events.borrow()),
-        [("q1".into(), Answer::Declined)]
-    );
+    assert_eq!(answered(&harness), [("q1".into(), Answer::Declined)]);
 
     harness.state_mut().ask(colors().with_declinable(false));
     harness.run();
@@ -415,13 +427,12 @@ fn a_question_can_be_declined_or_dismissed() {
     harness.state_mut().dismiss_question("q1");
     harness.run();
     assert!(harness.query_by_label("Submit").is_none());
-    assert_eq!(answered(&events.borrow()).len(), 1);
+    assert_eq!(answered(&harness).len(), 1);
 }
 
 #[test]
 fn writing_in_the_other_field_chooses_it() {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let (mut harness, events) = harness_with_events(&runtime);
+    let mut harness = harness_with_events();
     harness.state_mut().ask(
         colors()
             .with_other("Something is wrong")
@@ -461,13 +472,12 @@ fn writing_in_the_other_field_chooses_it() {
         choices: Vec::new(),
         other: Some("too dark".into()),
     };
-    assert_eq!(answered(&events.borrow()), [("q1".into(), chosen)]);
+    assert_eq!(answered(&harness), [("q1".into(), chosen)]);
 }
 
 #[test]
 fn the_decline_button_can_be_named() {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let (mut harness, events) = harness_with_events(&runtime);
+    let mut harness = harness_with_events();
     harness
         .state_mut()
         .ask(colors().with_declinable_label("None of them"));
@@ -475,16 +485,12 @@ fn the_decline_button_can_be_named() {
     assert!(harness.query_by_label("Skip").is_none());
     harness.get_by_label("None of them").click();
     harness.run();
-    assert_eq!(
-        answered(&events.borrow()),
-        [("q1".into(), Answer::Declined)]
-    );
+    assert_eq!(answered(&harness), [("q1".into(), Answer::Declined)]);
 }
 
 #[test]
 fn an_image_can_be_shown_large() {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let (mut harness, events) = harness_with_events(&runtime);
+    let mut harness = harness_with_events();
     let question = Question::new("q3", "Which?", vec![Choice::image("one", "First", image())])
         .with_image_size(egui::vec2(48.0, 48.0));
     harness.state_mut().ask(question);
@@ -497,7 +503,7 @@ fn an_image_can_be_shown_large() {
     assert!(harness.query_by_label("Close").is_none(), "not closed");
     // Enlarging does not choose
     assert!(submit_disabled(&harness));
-    assert!(answered(&events.borrow()).is_empty());
+    assert!(answered(&harness).is_empty());
 }
 
 /// The text of the first message in the history.
@@ -510,9 +516,8 @@ fn first_text(chat: &ChatPanel) -> String {
 
 #[test]
 fn pending_context_goes_with_the_next_message() {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
     let label = "Project changes will be sent with your message";
-    let mut harness = harness(&runtime, |chat| {
+    let mut harness = harness(|chat| {
         chat.set_pending_context(
             vec![("Project changes".into(), "main.rs: +1".into())],
             Some(label.into()),
@@ -521,8 +526,8 @@ fn pending_context_goes_with_the_next_message() {
     assert!(harness.query_by_label_contains(label).is_some());
     harness.event(Event::Text("hi".into()));
     harness.key_press(Key::Enter);
-    harness.step();
-    harness.state_mut().cancel();
+    send_steps(&mut harness);
+    harness.state_mut().stop();
     harness.run();
     assert!(harness.query_by_label_contains(label).is_none());
     assert_eq!(
@@ -537,19 +542,16 @@ fn pending_context_goes_with_the_next_message() {
     assert!(harness.query_by_label_contains("Project changes").is_none());
 
     // Sent once only
-    harness.state_mut().set_history(Vec::new());
-    let ctx = harness.ctx.clone();
-    harness.state_mut().send(&ctx, "again");
-    harness.state_mut().cancel();
-    assert_eq!(first_text(harness.state()), "again");
+    assert_eq!(
+        harness.state_mut().with_pending_context("again"),
+        Prompt::text("again")
+    );
 }
 
 #[test]
 fn an_empty_pending_context_shows_no_label() {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let harness = harness(&runtime, |chat| {
-        chat.set_pending_context(Vec::new(), Some("Changes will be sent".into()))
-    });
+    let harness =
+        harness(|chat| chat.set_pending_context(Vec::new(), Some("Changes will be sent".into())));
     assert!(
         harness
             .query_by_label_contains("Changes will be sent")
@@ -559,8 +561,7 @@ fn an_empty_pending_context_shows_no_label() {
 
 #[test]
 fn hidden_context_is_not_drawn() {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let harness = harness(&runtime, |chat| {
+    let harness = harness(|chat| {
         chat.set_history(vec![
             agentai::Message::user(context_block_hidden("Secret state", "a = 1")),
             agentai::Message::assistant("Noted."),
