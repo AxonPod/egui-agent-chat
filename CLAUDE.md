@@ -33,9 +33,10 @@ Prefer `if cfg!(...)` over `#[cfg]` so the code compiles everywhere.
 Live tests and the example read `AGENTAI_MODEL` (and the provider's variables) from the
 environment or `.env`. Variables already set in the shell win over `.env`.
 
-Releases: bump `version` in `Cargo.toml`, add its section to `CHANGELOG.md` and push a matching
-`vX.Y.Z` tag. `release.yml` runs CI,
-`cargo publish` (secret `CARGO_REGISTRY_TOKEN`) and creates a GitHub release.
+Releases: bump `version` in `Cargo.toml`, add its section to `CHANGELOG.md`, commit, then push
+a matching `vX.Y.Z` tag, e.g. `git tag v0.4.0 && git push origin v0.4.0`. `release.yml` runs
+CI, `cargo publish` (repository secret `CARGO_REGISTRY_TOKEN`) and creates a GitHub release.
+How to release is documented only here, not in `README.md`, which is for users of the crate.
 
 ## Architecture
 

@@ -311,18 +311,6 @@ the example. The image test needs a vision model.
 cargo test --test agent --features smol -- --ignored
 ```
 
-## Releasing
-
-Bump `version` in `Cargo.toml`, add its section to `CHANGELOG.md`, commit, then push a
-matching tag:
-
-```sh
-git tag v0.4.0 && git push origin v0.4.0
-```
-
-`.github/workflows/release.yml` runs CI, publishes to crates.io and creates a GitHub release.
-It needs a `CARGO_REGISTRY_TOKEN` repository secret.
-
 ## License
 
 Licensed under either of
