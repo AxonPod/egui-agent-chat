@@ -1,8 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
 
 ### Breaking changes
+
+See `MIGRATION.md` for how to port code from 0.4.
 
 - The panel is a view, not the agent's driver. `ChatPanel::new()` takes no agent and no
   spawner, and the panel starts nothing: a turn no longer moves only while the panel is drawn.

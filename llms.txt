@@ -10,6 +10,9 @@
 
 Key facts for integrating:
 
+- This describes 0.5. Code written for 0.4 (`ChatPanel::new(spawner, agent)`, `chat.send`,
+  `chat.cancel`, `ChatEvent`) does not compile with it; `MIGRATION.md` in the repository shows
+  how to port it.
 - `agentai` is not re-exported. Add it as your own dependency, from the `0.6` line this crate
   uses, so that both share one `Agent` type.
 - This crate builds agentai without its default features; the TLS backend comes from your
@@ -44,7 +47,7 @@ Key facts for integrating:
 ```toml
 [dependencies]
 agentai = "0.6"
-egui-agent-chat = "0.4"          # features `tokio` and `driver` are on by default
+egui-agent-chat = "0.5"          # features `tokio` and `driver` are on by default
 egui = "0.37"
 eframe = "0.37"                  # or any other egui integration
 tokio = { version = "1", features = ["rt-multi-thread"] }

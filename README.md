@@ -22,12 +22,22 @@ agents. Drop it into your app, show your agent's runs in it, and get:
 - context blocks: long material in a prompt shown collapsed under its title, or hidden, and
   context your app adds to the user's next message.
 
+## Upgrading from 0.4
+
+0.5 has breaking changes: the panel is a view, not the agent's driver. `ChatPanel::new()`
+takes no agent; a `Driver` (or your own loop) runs the agent and shows it in the panel through
+a `ChatSink`, and `ui()` returns `ChatAction`s instead of `ChatEvent`s. `send` and `cancel`
+moved to the driver as `send` and `stop`. See
+[`MIGRATION.md`](https://github.com/AxonPod/egui-agent-chat/blob/master/MIGRATION.md) for the
+steps, and [`CHANGELOG.md`](https://github.com/AxonPod/egui-agent-chat/blob/master/CHANGELOG.md)
+for everything that changed.
+
 ## Quick start
 
 ```toml
 [dependencies]
 agentai = "0.6"
-egui-agent-chat = "0.4"
+egui-agent-chat = "0.5"
 ```
 
 The agent comes from your own `agentai` dependency; use 0.6, the version this crate uses.

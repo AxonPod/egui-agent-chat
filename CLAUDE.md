@@ -36,7 +36,9 @@ environment or `.env`. Variables already set in the shell win over `.env`.
 Releases: bump `version` in `Cargo.toml`, add its section to `CHANGELOG.md`, commit, then push
 a matching `vX.Y.Z` tag, e.g. `git tag v0.4.0 && git push origin v0.4.0`. `release.yml` runs
 CI, `cargo publish` (repository secret `CARGO_REGISTRY_TOKEN`) and creates a GitHub release.
-How to release is documented only here, not in `README.md`, which is for users of the crate.
+A release with breaking changes also gets a section in `MIGRATION.md` (how to port code from
+the previous version) and a short note in `README.md` that links to it. How to release is
+documented only here, not in `README.md`, which is for users of the crate.
 
 ## Architecture
 
