@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.0
+
+### Breaking changes
+
+See `MIGRATION.md` for how to port code from 0.5.
+
+- Uses agentai 0.7. The agent and the history are agentai types, so depend on `agentai = "0.7"`
+  yourself, and port your agentai code with agentai's migration guide (hand-written `ToolBox`es
+  return `ToolReturn`; an empty prompt is an error). The chat's own API has not changed.
+- `Driver` does not run deferred (background) tool tasks: a tool that returns
+  `ToolReturn::Deferred` gets its immediate answer to the model, but its task is dropped.
+
 ## 0.5.0
 
 ### Breaking changes

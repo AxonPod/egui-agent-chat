@@ -134,15 +134,14 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agentai"
-version = "0.6.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "106de274a00d8c81b520408c801a4e63df666005fed3169b86251caa68949387"
+checksum = "a29d66157e9c63a60b264e36e48454a7a93246343feff5b606976145c33e3ae5"
 dependencies = [
  "agentai-core",
  "agentai-macros",
  "async-stream",
  "async-trait",
- "base64 0.23.1",
  "document-features",
  "futures-util",
  "genai",
@@ -158,9 +157,9 @@ dependencies = [
 
 [[package]]
 name = "agentai-core"
-version = "0.6.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7611d74a7a9d99510ec5e8ffa35abbf75755400535676ac2174b1fb3eb6829bc"
+checksum = "3474708857a0b73fa203adc7ab65a1aad5727b1b6c51bb69c0f036cb1542b038"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -174,9 +173,9 @@ dependencies = [
 
 [[package]]
 name = "agentai-macros"
-version = "0.6.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0db2a4c56d61a864e5278a4222f718eeb08a8e7afbbe769269e8fd86ff2e61ab"
+checksum = "13198b347f940ec70eaa5f3b428429fa4b36e2793973d58cbd3995ab801c6935"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -268,7 +267,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "parking_lot",
  "percent-encoding",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
  "wl-clipboard-rs",
  "x11rb",
 ]
@@ -1258,7 +1257,7 @@ dependencies = [
 
 [[package]]
 name = "egui-agent-chat"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "agentai",
  "anyhow",
@@ -1549,7 +1548,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3587,7 +3586,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4404,7 +4403,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4461,7 +4460,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5144,7 +5143,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.5",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6271,7 +6270,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

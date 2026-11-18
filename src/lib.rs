@@ -16,7 +16,7 @@
 //!
 //! # Usage
 //!
-//! Build your agent with your own `agentai` dependency (0.6, the version this crate uses). The
+//! Build your agent with your own `agentai` dependency (0.7, the version this crate uses). The
 //! simplest app hands it to a [`Driver`] (feature `driver`, on by default) with a [`Spawn`]
 //! that runs it on your async runtime, connects the panel's sink, and passes it the panel's
 //! actions every frame. With eframe and tokio:

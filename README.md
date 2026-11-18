@@ -22,13 +22,17 @@ agents. Drop it into your app, show your agent's runs in it, and get:
 - context blocks: long material in a prompt shown collapsed under its title, or hidden, and
   context your app adds to the user's next message.
 
-## Upgrading from 0.4
+## Upgrading
 
-0.5 has breaking changes: the panel is a view, not the agent's driver. `ChatPanel::new()`
+0.6 uses agentai 0.7: depend on `agentai = "0.7"`. Your code changes only where agentai's do
+(see agentai's migration guide); the chat's own API is the same as in 0.5.
+
+0.5 had breaking changes: the panel is a view, not the agent's driver. `ChatPanel::new()`
 takes no agent; a `Driver` (or your own loop) runs the agent and shows it in the panel through
 a `ChatSink`, and `ui()` returns `ChatAction`s instead of `ChatEvent`s. `send` and `cancel`
-moved to the driver as `send` and `stop`. See
-[`MIGRATION.md`](https://github.com/AxonPod/egui-agent-chat/blob/master/MIGRATION.md) for the
+moved to the driver as `send` and `stop`.
+
+See [`MIGRATION.md`](https://github.com/AxonPod/egui-agent-chat/blob/master/MIGRATION.md) for the
 steps, and [`CHANGELOG.md`](https://github.com/AxonPod/egui-agent-chat/blob/master/CHANGELOG.md)
 for everything that changed.
 
@@ -36,11 +40,11 @@ for everything that changed.
 
 ```toml
 [dependencies]
-agentai = "0.6"
-egui-agent-chat = "0.5"
+agentai = "0.7"
+egui-agent-chat = "0.6"
 ```
 
-The agent comes from your own `agentai` dependency; use 0.6, the version this crate uses.
+The agent comes from your own `agentai` dependency; use 0.7, the version this crate uses.
 The chat builds agentai without its default features, so the TLS backend is yours to choose:
 agentai's defaults give you rustls with ring, and with `default-features = false` you need to
 turn on one of its TLS features (`rustls-ring`, `rustls-aws-lc` or `native-tls`), or HTTPS

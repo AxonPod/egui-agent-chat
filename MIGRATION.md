@@ -1,5 +1,31 @@
 # Migration
 
+## From 0.5 to 0.6
+
+0.6 uses agentai 0.7 instead of 0.6. The chat's API has not changed, but it takes and gives
+agentai types (`Agent`, `Message`, `Prompt`, `EventListener`), so your `agentai` dependency
+must move to the same line:
+
+```toml
+# 0.5
+agentai = "0.6"
+egui-agent-chat = "0.5"
+# 0.6
+agentai = "0.7"
+egui-agent-chat = "0.6"
+```
+
+Then port your own agentai code with agentai's `MIGRATION.md` (section 0.6.0 → 0.7.0). What
+matters most in a chat app:
+
+- A hand-written `ToolBox` returns `ToolResult<ToolReturn>`: wrap the output with `.into()`.
+  `#[toolbox]` methods need no change.
+- An empty prompt fails with `AgentError::EmptyPrompt`. The panel never sends one; check
+  prompts you send from code with `Driver::send` or your own loop.
+- Tools that return `ToolReturn::Deferred` (background tasks) need a host that starts the
+  tasks and passes their handles to the next run. `Driver` does not do that yet: its runs drop
+  unstarted tasks, so use your own loop for such tools.
+
 ## From 0.4 to 0.5
 
 In 0.5 the panel is a view, not the agent's driver. `ChatPanel` no longer holds the agent or
