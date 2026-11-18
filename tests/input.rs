@@ -578,3 +578,20 @@ fn hidden_context_is_not_drawn() {
     assert!(harness.query_by_label_contains("Secret state").is_none());
     assert!(harness.query_by_label_contains("Other state").is_none());
 }
+
+#[test]
+fn a_long_input_scrolls_within_a_quarter_of_the_chat() {
+    let mut harness = harness(|_| {});
+    let text = (1..=60).map(|i| format!("line {i}")).collect::<Vec<_>>();
+    harness.event(Event::Text(text.join("\n")));
+    // Back to the start, so the top of the field is the top of what is shown
+    harness.key_press_modifiers(Modifiers::COMMAND, Key::ArrowUp);
+    harness.run_steps(3);
+    let top = harness.get_by_role(Role::MultilineTextInput).rect().min.y;
+    let send = harness.get_by_label_contains("Send").rect().min.y;
+    assert!(
+        send - top <= 600.0 / 4.0 + 12.0,
+        "the input takes {} of 600 points",
+        send - top
+    );
+}

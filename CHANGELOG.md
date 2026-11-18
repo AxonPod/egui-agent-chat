@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.1
+
+### Fixes
+
+- The input grows with its text only up to a quarter of the chat's height, then scrolls,
+  instead of pushing the conversation out of the panel.
+
 ## 0.6.0
 
 ### Breaking changes

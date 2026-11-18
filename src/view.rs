@@ -30,9 +30,13 @@ pub struct Caches {
 /// Space between the chat and the edges of its `Ui`.
 const MARGIN: i8 = 12;
 
+/// Largest part of the chat's height the text field takes before it scrolls.
+const MAX_INPUT_FRACTION: f32 = 0.25;
+
 /// The input at the bottom: the label of the pending context, the attached images, the text
 /// field and, unless the toolbar is off, the toolbar with the host's widgets from `add_widgets`
-/// on the left and Send or Stop on the right.
+/// on the left and Send or Stop on the right. The text field grows with its text up to
+/// [`MAX_INPUT_FRACTION`] of the chat's height, then scrolls.
 #[allow(clippy::too_many_arguments)]
 pub fn input(
     ui: &mut Ui,
@@ -45,6 +49,7 @@ pub fn input(
     add_widgets: impl FnOnce(&mut Toolbar<'_>),
 ) -> Option<InputAction> {
     let mut action = None;
+    let max_text_height = ui.available_height() * MAX_INPUT_FRACTION;
     let margin = Margin {
         left: MARGIN,
         right: MARGIN,
@@ -65,13 +70,20 @@ pub fn input(
                 ui.label(RichText::new(format!("{} {label}", icons::PAPERCLIP)).weak());
             }
             attachments(ui, &mut composer.attachments, &mut cache.media);
-            ui.add(
-                TextEdit::multiline(&mut composer.text)
-                    .id(id)
-                    .desired_rows(3)
-                    .hint_text(settings.send_shortcut.hint(ui.ctx()))
-                    .desired_width(f32::INFINITY),
-            );
+            ScrollArea::vertical()
+                .id_salt(id.with("scroll"))
+                .max_height(max_text_height)
+                .auto_shrink([false, true])
+                .stick_to_bottom(true)
+                .show(ui, |ui| {
+                    ui.add(
+                        TextEdit::multiline(&mut composer.text)
+                            .id(id)
+                            .desired_rows(3)
+                            .hint_text(settings.send_shortcut.hint(ui.ctx()))
+                            .desired_width(f32::INFINITY),
+                    );
+                });
             if settings.toolbar {
                 ui.add_space(4.0);
                 egui::Sides::new().show(
