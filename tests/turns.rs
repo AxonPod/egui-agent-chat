@@ -28,6 +28,11 @@ enum Reply {
         name: &'static str,
         arguments: &'static str,
     },
+    /// Streams the `reasoning` deltas, then the `text` deltas, and finishes.
+    ThinkAndFinish {
+        reasoning: &'static [&'static str],
+        text: &'static [&'static str],
+    },
     /// Streams these reasoning deltas, then stops at the token limit.
     CutWhileThinking(&'static [&'static str]),
     /// Answers with an HTTP error.
@@ -75,8 +80,16 @@ fn fake_server(replies: Vec<Reply>) -> (String, Arc<Mutex<Vec<String>>>) {
                 let _ = stream.write_all(b"data: [DONE]\n\n");
                 continue;
             }
+            if let Reply::ThinkAndFinish { reasoning, .. } = reply {
+                for delta in reasoning {
+                    let delta = format!(r#"{{"reasoning_content":{delta:?}}}"#);
+                    let _ = stream.write_all(chunk(&delta, "null").as_bytes());
+                }
+            }
             let deltas = match reply {
-                Reply::StartAndHang(deltas) | Reply::Finish(deltas) => deltas,
+                Reply::StartAndHang(deltas)
+                | Reply::Finish(deltas)
+                | Reply::ThinkAndFinish { text: deltas, .. } => deltas,
                 _ => unreachable!(),
             };
             for delta in deltas {
@@ -313,6 +326,31 @@ fn a_turn_ends_without_the_panel_being_drawn() {
     assert_eq!(history[1].text().as_deref(), Some("Hello there."));
     // The panel catches up when it is drawn
     frames(&ctx, &mut driver, &mut [&mut chat], Duration::ZERO);
+    assert_eq!(chat.history(), history);
+}
+
+#[test]
+fn the_final_answer_keeps_its_reasoning_once() {
+    let (url, _) = fake_server(vec![Reply::ThinkAndFinish {
+        reasoning: &["Let me ", "think."],
+        text: &["Hello ", "there."],
+    }]);
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let ctx = egui::Context::default();
+    let mut driver = driver(&url, &runtime);
+    let mut chat = panel(&mut driver, &ctx);
+
+    driver.send("Hi");
+    frames(&ctx, &mut driver, &mut [&mut chat], Duration::from_secs(5));
+    let history = driver.history();
+    assert_eq!(history.len(), 2);
+    let reasoning: Vec<_> = history[1]
+        .parts
+        .iter()
+        .filter(|part| matches!(part, Part::Reasoning(_)))
+        .collect();
+    assert_eq!(reasoning, [&Part::Reasoning("Let me think.".into())]);
+    assert_eq!(history[1].text().as_deref(), Some("Hello there."));
     assert_eq!(chat.history(), history);
 }
 

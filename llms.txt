@@ -46,8 +46,8 @@ Key facts for integrating:
 
 ```toml
 [dependencies]
-agentai = "0.7"
-egui-agent-chat = "0.6"          # features `tokio` and `driver` are on by default
+agentai = "0.7.5"
+egui-agent-chat = "0.7"          # features `tokio` and `driver` are on by default
 egui = "0.37"
 eframe = "0.37"                  # or any other egui integration
 tokio = { version = "1", features = ["rt-multi-thread"] }
@@ -187,15 +187,13 @@ with `set_history`.
 
 ## Your own loop
 
-Without the driver, run the agent wherever you like and use two helpers:
-
-- `sendable(&[Message]) -> Vec<Message>`: the history without assistant messages that hold only
-  reasoning (from a turn stopped while thinking), which providers refuse.
-- `with_final_reasoning(&AgentResult<D>) -> Vec<Message>`: `new_messages` with the reasoning of
-  the final answer in its message (agentai keeps it only in `reasoning_content`).
+Without the driver, run the agent wherever you like. `sendable(&[Message]) -> Vec<Message>` is
+the history without assistant messages that hold only reasoning (from a turn stopped while
+thinking), which providers refuse. Add `result.new_messages` to the history as they are: they
+hold the final answer's reasoning (agentai 0.7.5 and later).
 
 ```rust
-use egui_agent_chat::{sendable, with_final_reasoning};
+use egui_agent_chat::sendable;
 
 sink.turn_started(&prompt);
 let history_in = sendable(&history);
@@ -204,7 +202,7 @@ let run = async {
         .listen(sink.clone()).await
 };
 match run.await {
-    Ok(result) => history.extend(with_final_reasoning(&result)),
+    Ok(result) => history.extend(result.new_messages),
     Err(error) => sink.turn_failed(&error),
 }
 ```

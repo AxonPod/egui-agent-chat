@@ -134,9 +134,9 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agentai"
-version = "0.7.0"
+version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a29d66157e9c63a60b264e36e48454a7a93246343feff5b606976145c33e3ae5"
+checksum = "82f6a085de3e6afb6b09db19f647dec1f5252bc7bcca6057e8b7f3a79d18d8cc"
 dependencies = [
  "agentai-core",
  "agentai-macros",
@@ -1257,7 +1257,7 @@ dependencies = [
 
 [[package]]
 name = "egui-agent-chat"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "agentai",
  "anyhow",
@@ -5140,7 +5140,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.5",
  "windows-sys 0.61.2",

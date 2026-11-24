@@ -24,6 +24,10 @@ agents. Drop it into your app, show your agent's runs in it, and get:
 
 ## Upgrading
 
+0.7 needs agentai 0.7.5 and removes `with_final_reasoning`: in your own loop, add
+`result.new_messages` to the history as they are, since they already hold the final answer's
+reasoning.
+
 0.6 uses agentai 0.7: depend on `agentai = "0.7"`. Your code changes only where agentai's do
 (see agentai's migration guide); the chat's own API is the same as in 0.5.
 
@@ -40,8 +44,8 @@ for everything that changed.
 
 ```toml
 [dependencies]
-agentai = "0.7"
-egui-agent-chat = "0.6"
+agentai = "0.7.5"
+egui-agent-chat = "0.7"
 ```
 
 The agent comes from your own `agentai` dependency; use 0.7, the version this crate uses.
@@ -114,10 +118,10 @@ chat. To save the history, read `driver.history()` when `is_running()` turns fal
 Without the driver, run the agent on your runtime and listen with the sink, an agentai
 `EventListener`. Tell it what agentai's events do not carry: `turn_started(&prompt)`,
 `turn_failed(error)`, `turn_stopped()`. `sendable(history)` drops the messages providers
-refuse, `with_final_reasoning(&result)` keeps the reasoning of the final answer:
+refuse:
 
 ```rust
-use egui_agent_chat::{sendable, with_final_reasoning};
+use egui_agent_chat::sendable;
 
 sink.turn_started(&prompt);
 let history_in = sendable(&history);
@@ -126,7 +130,7 @@ let run = async {
         .listen(sink.clone()).await
 };
 match run.await {
-    Ok(result) => history.extend(with_final_reasoning(&result)),
+    Ok(result) => history.extend(result.new_messages),
     Err(error) => sink.turn_failed(&error),
 }
 ```

@@ -180,30 +180,6 @@ fn reply(messages: &mut Vec<Message>) -> &mut Message {
     messages.last_mut().expect("a message was just pushed")
 }
 
-/// The messages of a finished run, `new_messages`, with the reasoning of the final answer that
-/// was `streamed` but that agentai does not keep in them.
-pub(crate) fn finished_messages(
-    mut new_messages: Vec<Message>,
-    streamed: &[Message],
-) -> Vec<Message> {
-    let reasoning = streamed
-        .last()
-        .filter(|m| m.role == Role::Assistant)
-        .map(|m| {
-            m.parts
-                .iter()
-                .filter_map(|part| match part {
-                    Part::Reasoning(text) => Some(text.as_str()),
-                    _ => None,
-                })
-                .collect::<String>()
-        });
-    if let Some(reasoning) = reasoning {
-        crate::history::add_final_reasoning(&mut new_messages, reasoning);
-    }
-    new_messages
-}
-
 /// The messages of a turn that ended early, without the tool calls that got no result, as
 /// providers refuse a history with them.
 pub(crate) fn kept_messages(messages: &[Message]) -> Vec<Message> {
@@ -257,18 +233,5 @@ mod tests {
             assistant(vec![Part::ToolCall(pending)]),
         ];
         assert_eq!(kept_messages(&messages), messages[..3]);
-    }
-
-    #[test]
-    fn streamed_reasoning_goes_into_the_final_answer() {
-        let streamed = vec![
-            Message::user("hi"),
-            assistant(vec![
-                Part::Reasoning("hmm".into()),
-                Part::Text("Hi.".into()),
-            ]),
-        ];
-        let new = vec![Message::user("hi"), Message::assistant("Hi.")];
-        assert_eq!(finished_messages(new, &streamed), streamed);
     }
 }

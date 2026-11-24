@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.7.0
+
+### Breaking changes
+
+See `MIGRATION.md` for how to port code from 0.6.
+
+- Requires agentai 0.7.5, which keeps the final answer's reasoning (signed thinking blocks
+  included) in `AgentResult::new_messages`.
+- `with_final_reasoning` is removed: add `result.new_messages` to the history as they are.
+  With agentai 0.7.5 it would have added a second, unsigned copy of the reasoning.
+
+### Fixes
+
+- The panel and the driver save the final answer with its signed thinking, so it can be sent
+  back to Anthropic, and show its reasoning once.
+
 ## 0.6.1
 
 ### Fixes

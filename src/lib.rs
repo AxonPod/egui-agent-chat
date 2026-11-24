@@ -67,11 +67,11 @@
 //! Without the driver, run the agent yourself. [`ChatSink`] is an agentai
 //! [`EventListener`](agentai::listener::EventListener): give a clone to `listen`, and tell it
 //! what agentai's events do not carry, i.e. that a turn started, failed or was stopped.
-//! [`sendable`] and [`with_final_reasoning`] fix the history going in and coming out:
+//! [`sendable`] drops what providers refuse from the history going in:
 //!
 //! ```no_run
 //! use agentai::{Agent, Message, Prompt};
-//! use egui_agent_chat::{ChatSink, sendable, with_final_reasoning};
+//! use egui_agent_chat::{ChatSink, sendable};
 //!
 //! /// One turn; returns the messages to add to `history`.
 //! async fn turn(agent: &Agent, history: &[Message], prompt: Prompt, sink: ChatSink) -> Vec<Message> {
@@ -86,7 +86,7 @@
 //!             .await
 //!     };
 //!     match run.await {
-//!         Ok(result) => with_final_reasoning(&result),
+//!         Ok(result) => result.new_messages,
 //!         Err(error) => {
 //!             sink.turn_failed(&error);
 //!             Vec::new()
@@ -214,7 +214,7 @@ pub use capabilities::ModelCapabilities;
 pub use context::{ContextBlock, context_block, context_block_hidden, split_context};
 #[cfg(feature = "driver")]
 pub use driver::Driver;
-pub use history::{sendable, with_final_reasoning};
+pub use history::sendable;
 pub use question::{Answer, Choice, Question, QuestionLayout};
 pub use shortcut::SendShortcut;
 pub use sink::ChatSink;
@@ -226,7 +226,7 @@ pub use toolbar::Toolbar;
 
 use agentai::prompt::IntoPrompt;
 use agentai::{Media, Message, Part, Prompt};
-use sink::{Update, finished_messages, kept_messages, record};
+use sink::{Update, kept_messages, record};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -602,15 +602,10 @@ impl ChatPanel {
                 });
             }
             Update::Finished(new_messages) => {
-                let streamed = match self.turn.take() {
-                    Some(turn) => {
-                        self.drop_questions(&turn.messages);
-                        turn.messages
-                    }
-                    None => Vec::new(),
-                };
-                self.history
-                    .extend(finished_messages(new_messages, &streamed));
+                if let Some(turn) = self.turn.take() {
+                    self.drop_questions(&turn.messages);
+                }
+                self.history.extend(new_messages);
             }
             Update::Failed(error) => {
                 if let Some(turn) = self.turn.take() {

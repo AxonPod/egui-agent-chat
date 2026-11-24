@@ -1,5 +1,28 @@
 # Migration
 
+## From 0.6 to 0.7
+
+0.7 needs agentai 0.7.5 or later, which keeps the final answer's reasoning, signed thinking
+blocks included, in `AgentResult::new_messages`:
+
+```toml
+agentai = "0.7.5"
+egui-agent-chat = "0.7"
+```
+
+`with_final_reasoning` is gone. If you run the agent in your own loop, save `new_messages` as
+they are:
+
+```rust
+// 0.6
+Ok(result) => history.extend(with_final_reasoning(&result)),
+// 0.7
+Ok(result) => history.extend(result.new_messages),
+```
+
+Do not add `result.reasoning_content` to the last message yourself: it is already there.
+Code that uses `Driver` needs no change.
+
 ## From 0.5 to 0.6
 
 0.6 uses agentai 0.7 instead of 0.6. The chat's API has not changed, but it takes and gives

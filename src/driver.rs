@@ -1,6 +1,6 @@
 //! A ready-made host loop: runs the agent for the panels' [`ChatAction`]s.
 
-use crate::sink::{Update, finished_messages, kept_messages, record};
+use crate::sink::{Update, kept_messages, record};
 use crate::{ChatAction, ChatSink, Spawn, history};
 use agentai::listener::{EventListener, ListenerError, RunEvent};
 use agentai::prompt::IntoPrompt;
@@ -198,9 +198,8 @@ impl EventListener for Forward {
             let _ = sink.on_event(event);
         }
         if let Update::Finished(new_messages) = update {
-            let messages = finished_messages(new_messages, &turn.messages);
             state.turn = None;
-            state.history.extend(messages);
+            state.history.extend(new_messages);
         } else {
             record(&mut turn.messages, update);
         }

@@ -67,11 +67,10 @@ documented only here, not in `README.md`, which is for users of the crate.
   `Finished`, commits the messages to the history under the same lock, so `stop` racing a
   finish is safe; a listener of a turn that is no longer current ends its run. No public item
   outside this feature names `Agent`.
-- **History fixes (`src/history.rs`)**: `sendable` drops assistant messages with only reasoning
-  (unsigned, so e.g. Anthropic would get an empty message); `with_final_reasoning` works around
-  agentai keeping the final answer's reasoning only in `reasoning_content`. `RunEvent::Finished`
-  has no `reasoning_content`, so the panel and the driver use the streamed reasoning instead
-  (`sink::finished_messages`).
+- **History fix (`src/history.rs`)**: `sendable` drops assistant messages with only reasoning
+  (unsigned, so e.g. Anthropic would get an empty message). Since agentai 0.7.5, `new_messages`
+  keeps the final answer's reasoning (signed), so the panel and the driver save them as they
+  are.
 - **Ending a turn early (`ChatPanel::keep`, `sink::kept_messages`)**: on `turn_stopped`,
   `turn_failed` or a new `turn_started`, the turn always goes into the history as it is (the
   prompt, reasoning, text, answered tool calls), in the panel and in the driver; the history
